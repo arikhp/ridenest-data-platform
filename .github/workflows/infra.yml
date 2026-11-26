@@ -4,8 +4,9 @@
 name: infra
 
 on:
+  # Every PR runs checks + dev plan: they are required status checks on main, so a path filter here
+  # would leave docs-only PRs unmergeable. Deploys (push) stay limited to infra changes.
   pull_request:
-    paths: ["infra/**", "sql/**", ".github/workflows/infra.yml", ".github/workflows/_terraform-env.yml"]
   push:
     branches: [main]
     paths: ["infra/**", "sql/**", ".github/workflows/infra.yml", ".github/workflows/_terraform-env.yml"]

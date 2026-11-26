@@ -58,10 +58,25 @@ az datafactory pipeline create-run -g rg-ridenest-ilc --factory-name adf-ridenes
 - Snowflake resource monitors: 5 / 5 / 10 credits per month (dev / preprod / prod) + 5 on `COMPUTE_WH`.
 - The prod daily trigger stays **off** until the generator runs daily in CI (otherwise the 02:00 run finds no new files).
 
+## CI/CD (GitHub Actions)
+Repo: https://github.com/arikhp/ridenest-data-platform — `main` is protected (PR required; checks `fmt + validate` and `plan-dev / plan dev` must pass).
+
+| Event | What runs |
+|---|---|
+| Pull request | `terraform fmt`/`validate` on every root, `plan` for dev (Azure, Snowflake, pipelines), plan summary commented on the PR |
+| Merge to `main` (infra/sql changes) | apply **dev** → apply **preprod** → apply **prod** after manual approval (GitHub Environment `prod`) |
+
+- Azure login: GitHub OIDC → `id-ridenest-deploy-<env>` managed identity (federated subject
+  `repo:arikhp@<owner_id>/ridenest-data-platform@<repo_id>:environment:<env>`). No Azure secret stored.
+- Snowflake login: `TERRAFORM_SVC` key pair (`SNOWFLAKE_PRIVATE_KEY` secret).
+- Subscription/tenant/object IDs are GitHub **secrets** (masked in public logs) and git-ignored
+  `local.auto.tfvars` files locally; committed `terraform.tfvars` hold only non-identifying settings.
+
 ## Running Terraform locally
 ```bash
 az login
 # Azure
+# each root needs a git-ignored local.auto.tfvars with subscription_id (+ admin_object_ids / snowflake_sp_object_id)
 cd infra/envs/dev && terraform init -backend-config=../backend.hcl && terraform plan
 # Snowflake (needs the env vars below)
 export SNOWFLAKE_ORGANIZATION_NAME=... SNOWFLAKE_ACCOUNT_NAME=... SNOWFLAKE_USER=TERRAFORM_SVC \
@@ -73,6 +88,6 @@ cd infra/envs/dev/snowflake && terraform init -backend-config=../../backend.hcl 
 - [x] Bootstrap (RG, state, deploy identities)
 - [x] Azure dev / preprod / prod
 - [x] Snowflake dev / preprod / prod, incl. cross-cloud read of the Azure bronze container (verified with LIST @ADLS_STAGE)
-- [ ] GitHub repo + Actions (`infra.yml`)
+- [x] GitHub repo + Actions (`infra.yml`): PR plan, dev → preprod → prod (approval)
 - [x] Generator → ADF → BRONZE (dev: 7 days; preprod/prod: 1 year)
 - [ ] dbt SILVER / GOLD
