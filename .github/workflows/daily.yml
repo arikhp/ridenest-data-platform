@@ -1,0 +1,115 @@
+# Nightly data run: generate yesterday's activity -> ADF PL_INGEST_DAILY -> dbt build (SILVER + GOLD)
+#   schedule        : prod, 02:30 UTC (04:30 Tel Aviv, 03:30 Berlin, 02:30 Lisbon), for "yesterday" (UTC)
+#   manual dispatch : any env and date (e.g. to catch up a missed day; re-running a day is idempotent)
+# Prod uses the approval-free GitHub Environment `prod-ops` (main branch only); code deployments to prod
+# still go through the approval-gated `prod` environment in infra.yml / dbt.yml.
+name: daily
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment
+        type: choice
+        options: [prod, preprod, dev]
+        default: prod
+      run_date:
+        description: Day to generate and load (yyyy-mm-dd). Empty = yesterday (UTC).
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: daily-${{ inputs.env || 'prod' }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: daily ${{ inputs.env || 'prod' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ (inputs.env || 'prod') == 'prod' && 'prod-ops' || inputs.env }}
+    env:
+      ENV: ${{ inputs.env || 'prod' }}
+      RG: rg-ridenest-ilc
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ORGANIZATION_NAME }}-${{ secrets.SNOWFLAKE_ACCOUNT_NAME }}
+      DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            generator/requirements.txt
+            dbt/requirements.txt
+
+      - name: Install generator + dbt
+        run: |
+          pip install -q -r generator/requirements.txt -r dbt/requirements.txt
+          (cd dbt && dbt deps --quiet)
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve run date and resource names
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_DATE="${{ inputs.run_date }}"; RUN_DATE="${RUN_DATE:-$(date -u -d yesterday +%F)}"
+          date -d "$RUN_DATE" >/dev/null   # validates the format
+          SFX=$(printf "%s" "${{ secrets.AZURE_SUBSCRIPTION_ID }}" | sha1sum | cut -c1-6)
+          PROFILE=$([ "$ENV" = dev ] && echo dev || echo full)
+          { echo "RUN_DATE=$RUN_DATE"; echo "SFX=$SFX"; echo "PROFILE=$PROFILE"; echo "ADF=adf-ridenest-$ENV-$SFX"; echo "DBT_TARGET=$ENV"; } >> "$GITHUB_ENV"
+          echo "### Daily run — $ENV — $RUN_DATE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 1/3 Generate the day's source data
+        run: |
+          python generator/ridenest_gen.py --env "$ENV" --profile "$PROFILE" --end "$RUN_DATE" --days 1 \
+            --subscription-id "${{ secrets.AZURE_SUBSCRIPTION_ID }}" | tee "$RUNNER_TEMP/gen.log"
+          echo "- generator: $(grep -E '^done in' "$RUNNER_TEMP/gen.log")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 2/3 Data Factory PL_INGEST_DAILY
+        shell: bash
+        run: |
+          set -euo pipefail
+          az config set extension.use_dynamic_install=yes_without_prompt --only-show-errors >/dev/null
+          RUN_ID=$(az datafactory pipeline create-run -g "$RG" --factory-name "$ADF" -n PL_INGEST_DAILY \
+                   --parameters "{\"runDate\":\"$RUN_DATE\"}" --query runId -o tsv)
+          echo "ADF run $RUN_ID"
+          for i in $(seq 1 120); do
+            STATUS=$(az datafactory pipeline-run show -g "$RG" --factory-name "$ADF" --run-id "$RUN_ID" --query status -o tsv)
+            case "$STATUS" in InProgress|Queued|Canceling) sleep 15 ;; *) break ;; esac
+          done
+          echo "- Data Factory: $STATUS" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$STATUS" != "Succeeded" ]; then
+            az datafactory activity-run query-by-pipeline-run -g "$RG" --factory-name "$ADF" --run-id "$RUN_ID" \
+              --last-updated-after "$(date -u -d '-1 day' +%FT%TZ)" --last-updated-before "$(date -u -d '+1 day' +%FT%TZ)" \
+              --query "value[?status=='Failed'].{activity:activityName,error:error.message}" -o table || true
+            exit 1
+          fi
+
+      - name: Load the dbt key from the env's Key Vault
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY=$(az keyvault secret show --vault-name "kv-ridenest-${ENV}-${SFX:0:4}" -n snowflake-dbt-private-key --query value -o tsv)
+          while IFS= read -r line; do [ -n "$line" ] && echo "::add-mask::$line"; done <<< "$KEY"
+          { echo "SNOWFLAKE_DBT_PRIVATE_KEY<<__KEY__"; echo "$KEY"; echo "__KEY__"; } >> "$GITHUB_ENV"
+
+      - name: 3/3 dbt source freshness + build
+        working-directory: dbt
+        run: |
+          dbt source freshness || echo "::warning::BRONZE freshness check reported stale sources"
+          dbt build
+          python3 -c "import json,collections;r=json.load(open('target/run_results.json'));c=collections.Counter(x['status'] for x in r['results']);print('- dbt build: ' + ', '.join(f'{k} {v}' for k,v in sorted(c.items())) + f' ({r[\"elapsed_time\"]:.0f}s)')" >> "$GITHUB_STEP_SUMMARY"
