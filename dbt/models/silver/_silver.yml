@@ -74,8 +74,10 @@ models:
       - name: payment_id
         data_tests: [unique, not_null]
       - name: trip_id
-        description: Trip that was paid for. A few payments reference trips that were rejected in `trips` — those still exist there.
+        description: Trip that was paid for (exactly one payment per trip — GOLD joins rely on it). A few reference trips rejected in `trips`; those still exist there.
         data_tests:
+          - unique
+          - not_null
           - relationships:
               arguments: { to: "ref('trips')", field: trip_id }
               config: { severity: warn }

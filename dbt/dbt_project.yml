@@ -20,6 +20,15 @@ models:
       +tags: ["silver"]
       # catalog: LAYER tag on every object + PII tag on columns whose meta says so
       +post-hook: ["{{ apply_catalog_tags('silver') }}"]
+    gold:
+      +schema: gold
+      +materialized: table
+      +tags: ["gold"]
+      +post-hook: ["{{ apply_catalog_tags('gold') }}"]
+      dimensions:
+        +meta: { domain: core }
+      facts:
+        +meta: { domain: core }
 
 seeds:
   ridenest:

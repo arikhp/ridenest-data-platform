@@ -1,0 +1,207 @@
+version: 2
+
+# Shared contract types (dbt's `anchors:` key holds reusable YAML anchors)
+anchors:
+  - &num { data_type: number }
+  - &eur { data_type: "number(18, 2)" }
+
+models:
+  # ---------------------------------------------------------------- dimensions
+  - name: dim_date
+    description: Calendar 2024–2027. is_peak_weekend = Fri–Sun (the operating cities' busiest days).
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+      - name: date_key
+        data_tests: [unique, not_null]
+
+  - name: dim_city
+    description: Operating cities with country, timezone and tariff (local currency and EUR).
+    columns:
+      - name: city_code
+        data_tests: [unique, not_null]
+
+  - name: dim_zone
+    description: Operating zones with their city.
+    columns:
+      - name: zone_id
+        data_tests: [unique, not_null]
+
+  - name: dim_vehicle
+    description: Vehicles with type, home zone and age (as of the last fleet snapshot).
+    columns:
+      - name: vehicle_id
+        data_tests: [unique, not_null]
+
+  - name: dim_rider
+    description: >
+      Riders WITHOUT personal data (name/email/phone stay in SILVER). Includes first/last trip, lifetime trips
+      and paid amount, and a status as of the last day with trips: active (<=30 days), lapsed (31–90), churned (>90), never_rode.
+    columns:
+      - name: rider_id
+        data_tests: [unique, not_null]
+      - name: rider_status
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["active", "lapsed", "churned", "never_rode"] }
+
+  # ---------------------------------------------------------------- facts
+  - name: fct_trips
+    description: One row per VALID trip with its payment outcome. Amounts in EUR; date in the city's local time.
+    columns:
+      - name: trip_id
+        data_tests: [unique, not_null]
+      - name: date_key
+        data_tests:
+          - relationships:
+              arguments: { to: "ref('dim_date')", field: date_key }
+      - name: rider_id
+        data_tests:
+          - relationships:
+              arguments: { to: "ref('dim_rider')", field: rider_id }
+      - name: vehicle_id
+        data_tests:
+          - relationships:
+              arguments: { to: "ref('dim_vehicle')", field: vehicle_id }
+      - name: start_zone_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: { to: "ref('dim_zone')", field: zone_id }
+      - name: city_code
+        data_tests:
+          - relationships:
+              arguments: { to: "ref('dim_city')", field: city_code }
+      - name: payment_status
+        description: succeeded / failed / refunded, or 'missing' when no payment was recorded.
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["succeeded", "failed", "refunded", "missing"] }
+      - name: collected_eur
+        description: Money actually collected (succeeded payments only).
+
+  - name: fct_vehicle_day
+    description: One row per vehicle per day — status, riding done that day, and share of the day on a trip.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["vehicle_id", "snapshot_date"] }
+    columns:
+      - name: utilization_pct
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 1 }
+
+  # ---------------------------------------------------------------- marts (contracts enforced)
+  - name: mart_revenue_daily
+    description: City x day demand and revenue. gross_fare = what trips cost; collected = succeeded payments.
+    config:
+      contract: { enforced: true }
+      meta: { domain: finance }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["date_day", "city_code"] }
+    columns:
+      - { name: date_day, data_type: date, constraints: [{ type: not_null }] }
+      - { name: city_code, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: trips, <<: *num }
+      - { name: active_riders, <<: *num, description: Distinct riders with a trip that day. }
+      - { name: vehicles_used, <<: *num }
+      - { name: gross_fare_eur, <<: *eur }
+      - { name: collected_eur, <<: *eur }
+      - { name: refunded_eur, <<: *eur }
+      - { name: failed_eur, <<: *eur }
+      - name: collection_rate
+        data_type: "number(9, 4)"
+        description: collected / gross fare.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 1 }
+      - { name: avg_fare_eur, <<: *eur }
+      - { name: avg_duration_min, data_type: "number(9, 1)" }
+      - { name: avg_distance_km, data_type: "number(9, 2)" }
+      - { name: promo_trips, <<: *num }
+
+  - name: mart_zone_daily
+    description: Start-zone x day demand and revenue, with the zone's share of its city's trips.
+    config:
+      contract: { enforced: true }
+      meta: { domain: finance }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["date_day", "zone_id"] }
+    columns:
+      - { name: date_day, data_type: date, constraints: [{ type: not_null }] }
+      - { name: zone_id, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: zone_name, data_type: varchar }
+      - { name: city_code, data_type: varchar }
+      - { name: trips, <<: *num }
+      - { name: share_of_city_trips, data_type: "number(9, 4)" }
+      - { name: collected_eur, <<: *eur }
+      - { name: avg_duration_min, data_type: "number(9, 1)" }
+      - { name: same_zone_trip_rate, data_type: "number(9, 4)", description: Share of trips ending in the zone they started in. }
+
+  - name: mart_fleet_utilization_daily
+    description: City x day fleet KPIs. Deployable = not retired and not in maintenance. TVD = trips per deployable vehicle.
+    config:
+      contract: { enforced: true }
+      meta: { domain: fleet }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["date_day", "city_code"] }
+    columns:
+      - { name: date_day, data_type: date, constraints: [{ type: not_null }] }
+      - { name: city_code, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: fleet_size, <<: *num }
+      - { name: deployable_vehicles, <<: *num }
+      - { name: vehicles_in_maintenance, <<: *num }
+      - { name: trips, <<: *num }
+      - { name: trips_per_deployable_vehicle, data_type: "number(9, 2)" }
+      - name: avg_utilization_pct
+        data_type: "number(9, 4)"
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 1 }
+      - { name: collected_eur_per_deployable_vehicle, <<: *eur }
+      - { name: avg_battery_pct, data_type: "number(9, 1)" }
+
+  - name: mart_rider_retention_monthly
+    description: >
+      Cohort retention by month of first trip and home city. retention_rate = share of the cohort riding
+      again N months later. Exclude is_left_censored_cohort (first month of history) from analysis.
+    config:
+      contract: { enforced: true }
+      meta: { domain: riders }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["cohort_month", "home_city_code", "months_since_first_trip"] }
+    columns:
+      - { name: cohort_month, data_type: date, constraints: [{ type: not_null }] }
+      - { name: home_city_code, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: months_since_first_trip, <<: *num }
+      - { name: cohort_size, <<: *num }
+      - { name: active_riders, <<: *num }
+      - name: retention_rate
+        data_type: "number(9, 4)"
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 1 }
+      - { name: is_left_censored_cohort, data_type: boolean }
+
+  - name: mart_maintenance_monthly
+    description: City x month x issue maintenance volume, cost, repair time and cost per fleet vehicle.
+    config:
+      contract: { enforced: true }
+      meta: { domain: fleet }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["month_start", "city_code", "issue"] }
+    columns:
+      - { name: month_start, data_type: date, constraints: [{ type: not_null }] }
+      - { name: city_code, data_type: varchar, constraints: [{ type: not_null }] }
+      - { name: issue, data_type: varchar }
+      - { name: tickets, <<: *num }
+      - { name: open_tickets, <<: *num }
+      - { name: total_cost_eur, <<: *eur }
+      - { name: avg_repair_hours, data_type: "number(9, 1)" }
+      - { name: avg_fleet_size, data_type: "number(9, 1)" }
+      - { name: cost_per_fleet_vehicle_eur, <<: *eur }

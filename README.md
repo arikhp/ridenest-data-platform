@@ -20,7 +20,7 @@ Architecture diagram: see [docs/architecture.md](docs/architecture.md).
 | `sql/00_snowflake_bootstrap.sql` | One-off: creates `TERRAFORM_SVC` (run with **Run All**) |
 | `sql/bronze/` | BRONZE load SQL executed by ADF: daily partition replace, and full reload |
 | `generator/` | Python mock-data generator (`dev` and `full` profiles) |
-| `dbt/` | dbt project: SILVER models + tests (GOLD next) |
+| `dbt/` | dbt project: SILVER + GOLD models and tests |
 
 ## Conventions
 - **All Azure resources live in one resource group, `rg-ridenest-ilc` (Israel Central).** Environments are
@@ -80,6 +80,18 @@ source ./env.sh dev          # loads the dbt key from Key Vault into memory
 .venv/bin/dbt build          # SILVER on dev; full year on preprod builds in ~35 s on an XS warehouse
 ```
 
+## GOLD (dbt)
+Star schema + business marts, read by BI through the `<ENV>_READER` role. No personal data in GOLD.
+
+| Kind | Model | Grain |
+|---|---|---|
+| Dimensions | `dim_date`, `dim_city`, `dim_zone`, `dim_vehicle`, `dim_rider` (status active/lapsed/churned, lifetime stats) | one row per member |
+| Facts | `fct_trips` (valid trips + payment outcome), `fct_vehicle_day` (status, trips, utilisation) | trip / vehicle-day |
+| Marts *(contracts enforced)* | `mart_revenue_daily` (finance), `mart_zone_daily` (finance), `mart_fleet_utilization_daily` (fleet), `mart_rider_retention_monthly` (riders), `mart_maintenance_monthly` (fleet) | city-day / zone-day / cohort-month / city-month-issue |
+
+Reconciliation tests guarantee GOLD = SILVER for trips, fare and collected revenue, and fleet trips = trip fact.
+Preprod (1 year, 2.1M valid trips): full SILVER + GOLD build with 106 tests in ~40 s on an XS warehouse.
+
 ## CI/CD (GitHub Actions)
 Repo: https://github.com/arikhp/ridenest-data-platform — `main` is protected (PR required; checks `fmt + validate` and `plan-dev / plan dev` must pass).
 
@@ -113,5 +125,5 @@ cd infra/envs/dev/snowflake && terraform init -backend-config=../../backend.hcl 
 - [x] GitHub repo + Actions (`infra.yml`): PR plan, dev → preprod → prod (approval)
 - [x] Generator → ADF → BRONZE (dev: 7 days; preprod/prod: 1 year)
 - [x] dbt SILVER (dev + preprod built; prod via dbt CI/CD, next)
-- [ ] dbt GOLD
+- [x] dbt GOLD (dev + preprod built)
 - [ ] dbt CI/CD + scheduled runs
