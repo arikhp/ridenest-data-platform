@@ -26,7 +26,8 @@ permissions:
 
 jobs:
   dbt:
-    name: dbt ${{ inputs.command }} ${{ inputs.target }}${{ inputs.schema_prefix != '' && format(' ({0})', inputs.schema_prefix) || '' }}
+    # Stable name (no PR number) so it can be a required status check: "ci / dbt build dev"
+    name: dbt ${{ inputs.command }} ${{ inputs.target }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     defaults:
