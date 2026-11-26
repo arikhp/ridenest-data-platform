@@ -2,6 +2,9 @@ locals {
   project = "ridenest"
   # Deterministic suffix keeps globally-unique names stable per subscription.
   suffix = substr(sha1(var.subscription_id), 0, 6)
+  # GitHub's OIDC `sub` for repos created since 2026 embeds immutable numeric IDs
+  # (repo:<owner>@<owner_id>/<repo>@<repo_id>:...), so a re-created repo with the same name can't impersonate it.
+  gh_subject_prefix = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}"
   tags = {
     project    = local.project
     managed_by = "terraform"
@@ -85,7 +88,7 @@ resource "azurerm_federated_identity_credential" "gh_env" {
   parent_id           = azurerm_user_assigned_identity.deploy[each.key].id
   audience            = ["api://AzureADTokenExchange"]
   issuer              = "https://token.actions.githubusercontent.com"
-  subject             = "repo:${var.github_owner}/${var.github_repo}:environment:${each.key}"
+  subject             = "${local.gh_subject_prefix}:environment:${each.key}"
 }
 
 # Pull requests run `terraform plan` against dev with the dev identity.
@@ -96,7 +99,7 @@ resource "azurerm_federated_identity_credential" "gh_pr" {
   parent_id           = azurerm_user_assigned_identity.deploy["dev"].id
   audience            = ["api://AzureADTokenExchange"]
   issuer              = "https://token.actions.githubusercontent.com"
-  subject             = "repo:${var.github_owner}/${var.github_repo}:pull_request"
+  subject             = "${local.gh_subject_prefix}:pull_request"
 }
 
 # ---------- Monthly cost guardrail (emails the subscription Owner role) ----------
