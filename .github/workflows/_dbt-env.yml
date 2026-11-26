@@ -67,7 +67,7 @@ jobs:
 
       - name: dbt build
         if: inputs.command == 'build'
-        run: dbt build --fail-fast=false
+        run: dbt build # default: keep going after a failure so the summary lists every problem
 
       - name: Drop PR schemas
         if: inputs.command == 'cleanup'
