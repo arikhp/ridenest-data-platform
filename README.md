@@ -120,8 +120,11 @@ Every day at **02:30 UTC** GitHub Actions runs, for prod and for *yesterday*:
 2. **Data Factory** `PL_INGEST_DAILY` (runDate = that day) — landing/SQL → `bronze/raw/…/yyyy/MM/dd` → Snowflake BRONZE; the job waits for it.
 3. **dbt** — `source freshness` (warning if BRONZE is stale) and `dbt build` (SILVER + GOLD + 106 checks).
 
-Any failure fails the workflow (GitHub emails the repo owner). Manual run: *Actions → daily → Run workflow*, choose env and date
-(useful to catch up a missed day).
+Manual run: *Actions → daily → Run workflow*, choose env and date (useful to catch up a missed day).
+
+**Alerts.** A failed run opens a GitHub issue **"Nightly run failing: &lt;env&gt;"** (label `nightly-failure`) with the date, the
+failed step and the log link; GitHub emails the repo owner. While that issue is open, further failures add a comment instead of
+a new issue. The next successful run in that env closes it with a "Recovered" comment. The `alert` job needs no secrets or Azure access.
 
 Prod nightly runs use the GitHub Environment **`prod-ops`**: no approval, `main` branch only, prod identity — a decision by the
 project owner so the nightly job does not wait for a click. Code deployments to prod (`infra.yml`, `dbt.yml`) still need approval.
@@ -148,3 +151,4 @@ cd infra/envs/dev/snowflake && terraform init -backend-config=../../backend.hcl 
 - [x] dbt GOLD (dev + preprod built)
 - [x] dbt CI/CD (PR schemas, dev → preprod → prod)
 - [x] Scheduled daily runs (generator → ADF → dbt), prod 02:30 UTC
+- [x] Failure alerts (GitHub issue per env, auto-closed on recovery)
