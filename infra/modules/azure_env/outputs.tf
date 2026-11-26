@@ -1,0 +1,10 @@
+output "lake_account_name" { value = azurerm_storage_account.lake.name }
+output "lake_account_id" { value = azurerm_storage_account.lake.id }
+output "lake_dfs_endpoint" { value = azurerm_storage_account.lake.primary_dfs_endpoint }
+output "lake_blob_endpoint" { value = azurerm_storage_account.lake.primary_blob_endpoint }
+output "key_vault_name" { value = azurerm_key_vault.this.name }
+output "key_vault_id" { value = azurerm_key_vault.this.id }
+output "data_factory_name" { value = azurerm_data_factory.this.name }
+output "sql_server_fqdn" { value = azurerm_mssql_server.billing.fully_qualified_domain_name }
+output "sql_database_name" { value = azurerm_mssql_database.billing.name }
+output "log_analytics_workspace_id" { value = azurerm_log_analytics_workspace.this.id }

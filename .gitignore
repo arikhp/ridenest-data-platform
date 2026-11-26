@@ -1,0 +1,24 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+.terraform.tfstate.lock.info
+# Secrets — never commit
+*.p8
+*.pem
+.env
+*.auto.tfvars
+secrets.tfvars
+# Python / dbt
+__pycache__/
+.venv/
+dbt/**/target/
+dbt/**/dbt_packages/
+dbt/**/logs/
+# OS
+.DS_Store

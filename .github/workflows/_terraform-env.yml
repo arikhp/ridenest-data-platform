@@ -1,0 +1,90 @@
+# Reusable: plan (and optionally apply) every Terraform root of ONE environment, in dependency order:
+#   envs/<env> (Azure)  ->  envs/<env>/snowflake  ->  envs/<env>/pipelines  [-> account/snowflake for prod]
+# Auth: Azure via GitHub OIDC -> user-assigned managed identity (no Azure secrets stored);
+#       Snowflake via key-pair of TERRAFORM_SVC.
+# All IDs are GitHub *secrets* so they are masked in the (public) logs.
+name: terraform-env
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        type: string
+        required: true
+      mode:
+        type: string
+        required: true # plan | apply
+      environment:
+        type: string
+        default: "" # GitHub Environment (approval gates, per-env AZURE_CLIENT_ID). Empty for PR plans.
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform:
+    name: ${{ inputs.mode }} ${{ inputs.env }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.tf-plugin-cache
+      # azurerm provider + azurerm backend: OIDC with the env's deploy identity
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_admin_object_ids: ${{ secrets.ADMIN_OBJECT_IDS }} # JSON list, e.g. ["<object-id>"]
+      TF_VAR_snowflake_sp_object_id: ${{ secrets.SNOWFLAKE_SP_OBJECT_ID }}
+      # snowflake provider
+      SNOWFLAKE_ORGANIZATION_NAME: ${{ secrets.SNOWFLAKE_ORGANIZATION_NAME }}
+      SNOWFLAKE_ACCOUNT_NAME: ${{ secrets.SNOWFLAKE_ACCOUNT_NAME }}
+      SNOWFLAKE_USER: TERRAFORM_SVC
+      SNOWFLAKE_AUTHENTICATOR: SNOWFLAKE_JWT
+      SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+          terraform_wrapper: false
+
+      - name: Terraform ${{ inputs.mode }} (${{ inputs.env }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          ROOTS=("infra/envs/${{ inputs.env }}" "infra/envs/${{ inputs.env }}/snowflake" "infra/envs/${{ inputs.env }}/pipelines")
+          if [ "${{ inputs.env }}" = "prod" ]; then ROOTS+=("infra/account/snowflake"); fi
+          echo "## Terraform ${{ inputs.mode }} — ${{ inputs.env }}" >> "$GITHUB_STEP_SUMMARY"
+          : > "$RUNNER_TEMP/plan-summary.md"
+          for ROOT in "${ROOTS[@]}"; do
+            echo "::group::$ROOT"
+            terraform -chdir="$ROOT" init -backend-config="$GITHUB_WORKSPACE/infra/envs/backend.hcl"
+            set +e
+            terraform -chdir="$ROOT" plan -lock-timeout=5m -detailed-exitcode -out=tfplan -no-color > "$RUNNER_TEMP/plan.txt" 2>&1
+            RC=$?
+            set -e
+            cat "$RUNNER_TEMP/plan.txt"
+            echo "::endgroup::"
+            if [ $RC -eq 1 ]; then echo "::error::plan failed in $ROOT"; exit 1; fi
+            LINE=$(grep -E "^(Plan:|No changes\.)" "$RUNNER_TEMP/plan.txt" | head -1 || true)
+            echo "- \`$ROOT\`: ${LINE:-see log}" | tee -a "$GITHUB_STEP_SUMMARY" >> "$RUNNER_TEMP/plan-summary.md"
+            if [ "${{ inputs.mode }}" = "apply" ] && [ $RC -eq 2 ]; then
+              terraform -chdir="$ROOT" apply -lock-timeout=5m -no-color tfplan
+            fi
+          done
+
+      - name: Comment plan on the pull request
+        if: inputs.mode == 'plan' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo "### Terraform plan — ${{ inputs.env }}"; cat "$RUNNER_TEMP/plan-summary.md";
+            echo; echo "_Full output in the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})._"; } > comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md

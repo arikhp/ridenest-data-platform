@@ -1,0 +1,5 @@
+faker>=30
+pymssql>=2.3
+azure-identity>=1.17
+azure-storage-file-datalake>=12.16
+azure-keyvault-secrets>=4.8

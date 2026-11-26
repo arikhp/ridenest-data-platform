@@ -1,0 +1,82 @@
+# Infrastructure CI/CD
+#   pull request -> fmt + validate all roots, plan dev, comment the plan on the PR
+#   merge to main -> apply dev -> apply preprod -> (manual approval) apply prod
+name: infra
+
+on:
+  pull_request:
+    paths: ["infra/**", "sql/**", ".github/workflows/infra.yml", ".github/workflows/_terraform-env.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/**", "sql/**", ".github/workflows/infra.yml", ".github/workflows/_terraform-env.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: false # never interrupt a running apply
+
+jobs:
+  checks:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+          terraform_wrapper: false
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff infra
+      - name: terraform validate (every root, no backend)
+        run: |
+          set -euo pipefail
+          export TF_PLUGIN_CACHE_DIR="$RUNNER_TEMP/plugins"; mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          for ROOT in infra/bootstrap infra/account/snowflake infra/envs/*/ infra/envs/*/snowflake infra/envs/*/pipelines; do
+            echo "::group::$ROOT"
+            terraform -chdir="$ROOT" init -backend=false -input=false >/dev/null
+            terraform -chdir="$ROOT" validate -no-color
+            echo "::endgroup::"
+          done
+
+  plan-dev:
+    # Only for PRs from this repo: forks get no OIDC token or secrets.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: checks
+    uses: ./.github/workflows/_terraform-env.yml
+    with:
+      env: dev
+      mode: plan
+    secrets: inherit
+
+  deploy-dev:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: checks
+    uses: ./.github/workflows/_terraform-env.yml
+    with:
+      env: dev
+      mode: apply
+      environment: dev
+    secrets: inherit
+
+  deploy-preprod:
+    needs: deploy-dev
+    uses: ./.github/workflows/_terraform-env.yml
+    with:
+      env: preprod
+      mode: apply
+      environment: preprod
+    secrets: inherit
+
+  deploy-prod:
+    needs: deploy-preprod
+    uses: ./.github/workflows/_terraform-env.yml
+    with:
+      env: prod
+      mode: apply
+      environment: prod # requires approval
+    secrets: inherit
