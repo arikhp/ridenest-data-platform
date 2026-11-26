@@ -217,3 +217,38 @@ resource "snowflake_tag_association" "layer" {
   tag_id             = snowflake_tag.layer.fully_qualified_name
   tag_value          = lower(each.key)
 }
+
+# ---------------- dbt (TRANSFORMER) extras ----------------
+# dbt applies PII / LAYER / DOMAIN tags to the objects it builds (catalog), so it needs
+# USAGE on the GOVERNANCE schema and APPLY on each tag.
+resource "snowflake_grant_privileges_to_account_role" "transformer_governance_usage" {
+  account_role_name = snowflake_account_role.r["TRANSFORMER"].name
+  privileges        = ["USAGE"]
+  on_schema {
+    schema_name = snowflake_schema.governance.fully_qualified_name
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "transformer_apply_tags" {
+  for_each = {
+    LAYER  = snowflake_tag.layer.fully_qualified_name
+    PII    = snowflake_tag.pii.fully_qualified_name
+    DOMAIN = snowflake_tag.domain.fully_qualified_name
+  }
+  account_role_name = snowflake_account_role.r["TRANSFORMER"].name
+  privileges        = ["APPLY"]
+  on_schema_object {
+    object_type = "TAG"
+    object_name = each.value
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "transformer_create_schema" {
+  count             = var.transformer_can_create_schemas ? 1 : 0
+  account_role_name = snowflake_account_role.r["TRANSFORMER"].name
+  privileges        = ["CREATE SCHEMA"]
+  on_account_object {
+    object_type = "DATABASE"
+    object_name = snowflake_database.this.name
+  }
+}
