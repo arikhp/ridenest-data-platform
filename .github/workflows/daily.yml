@@ -3,6 +3,8 @@
 #   manual dispatch : any env and date (e.g. to catch up a missed day; re-running a day is idempotent)
 # Prod uses the approval-free GitHub Environment `prod-ops` (main branch only); code deployments to prod
 # still go through the approval-gated `prod` environment in infra.yml / dbt.yml.
+# Alerting: a failed run opens (or comments on) a GitHub issue labelled `nightly-failure`; the next
+# successful run in the same env closes it. GitHub emails the repo owner about new issues.
 name: daily
 
 on:
@@ -33,6 +35,8 @@ jobs:
     name: daily ${{ inputs.env || 'prod' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      run_date: ${{ steps.resolve.outputs.run_date }}
     environment: ${{ (inputs.env || 'prod') == 'prod' && 'prod-ops' || inputs.env }}
     env:
       ENV: ${{ inputs.env || 'prod' }}
@@ -63,10 +67,12 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Resolve run date and resource names
+        id: resolve
         shell: bash
         run: |
           set -euo pipefail
           RUN_DATE="${{ inputs.run_date }}"; RUN_DATE="${RUN_DATE:-$(date -u -d yesterday +%F)}"
+          echo "run_date=$RUN_DATE" >> "$GITHUB_OUTPUT"
           date -d "$RUN_DATE" >/dev/null   # validates the format
           SFX=$(printf "%s" "${{ secrets.AZURE_SUBSCRIPTION_ID }}" | sha1sum | cut -c1-6)
           PROFILE=$([ "$ENV" = dev ] && echo dev || echo full)
@@ -87,7 +93,7 @@ jobs:
           RUN_ID=$(az datafactory pipeline create-run -g "$RG" --factory-name "$ADF" -n PL_INGEST_DAILY \
                    --parameters "{\"runDate\":\"$RUN_DATE\"}" --query runId -o tsv)
           echo "ADF run $RUN_ID"
-          for i in $(seq 1 120); do
+          for _ in $(seq 1 120); do
             STATUS=$(az datafactory pipeline-run show -g "$RG" --factory-name "$ADF" --run-id "$RUN_ID" --query status -o tsv)
             case "$STATUS" in InProgress|Queued|Canceling) sleep 15 ;; *) break ;; esac
           done
@@ -113,3 +119,53 @@ jobs:
           dbt source freshness || echo "::warning::BRONZE freshness check reported stale sources"
           dbt build
           python3 -c "import json,collections;r=json.load(open('target/run_results.json'));c=collections.Counter(x['status'] for x in r['results']);print('- dbt build: ' + ', '.join(f'{k} {v}' for k,v in sorted(c.items())) + f' ({r[\"elapsed_time\"]:.0f}s)')" >> "$GITHUB_STEP_SUMMARY"
+
+  # Open / update / close the failure issue. Runs without secrets or Azure access.
+  alert:
+    name: alert ${{ inputs.env || 'prod' }}
+    needs: run
+    if: always() && (needs.run.result == 'failure' || needs.run.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ENV: ${{ inputs.env || 'prod' }}
+      RESULT: ${{ needs.run.result }}
+      RUN_DATE: ${{ needs.run.outputs.run_date }}
+      TRIGGER: ${{ github.event_name }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update or close the nightly-failure issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          LABEL=nightly-failure
+          TITLE="Nightly run failing: $ENV"
+          gh label create "$LABEL" --color B60205 --description "The daily data run failed" 2>/dev/null || true
+          NUM=$(gh issue list --label "$LABEL" --state open --json number,title \
+                  --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ "$RESULT" = failure ]; then
+            STEP=$(gh run view "${{ github.run_id }}" --json jobs \
+                     --jq '[.jobs[] | select(.name | startswith("daily")) | .steps[] | select(.conclusion == "failure") | .name] | first // "unknown"')
+            BODY=$(printf '%s\n' \
+              "The **$ENV** daily run for **${RUN_DATE:-unknown date}** failed at step **$STEP** (trigger: $TRIGGER)." \
+              "" \
+              "- Log: $RUN_URL" \
+              "- Fix, then re-run the day: Actions > daily > Run workflow (env $ENV, run_date ${RUN_DATE:-yyyy-mm-dd}). Re-running a day is safe." \
+              "- This issue closes itself after the next successful $ENV run.")
+            if [ -n "$NUM" ]; then
+              gh issue comment "$NUM" --body "$BODY"
+              echo "Commented on issue #$NUM" >> "$GITHUB_STEP_SUMMARY"
+            else
+              URL=$(gh issue create --title "$TITLE" --label "$LABEL" --body "$BODY")
+              echo "Opened $URL" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          elif [ -n "$NUM" ]; then
+            gh issue close "$NUM" --comment "Recovered: the $ENV run for ${RUN_DATE} succeeded ($RUN_URL)."
+            echo "Closed issue #$NUM" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Run succeeded; no open failure issue." >> "$GITHUB_STEP_SUMMARY"
+          fi
