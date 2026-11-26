@@ -34,3 +34,15 @@ variable "monthly_budget_usd" {
   default     = 25
   description = "Alerts at 60% (~$15) and 100% actual, and at 100% forecasted."
 }
+
+variable "github_owner_id" {
+  type        = string
+  default     = ""
+  description = "Numeric GitHub user/org id (gh api users/<owner> --jq .id)."
+}
+
+variable "github_repo_id" {
+  type        = string
+  default     = ""
+  description = "Numeric GitHub repository id (gh api repos/<owner>/<repo> --jq .id)."
+}
