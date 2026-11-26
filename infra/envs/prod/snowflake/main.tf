@@ -74,7 +74,7 @@ resource "azurerm_key_vault_secret" "svc_private_key" {
   content_type = "application/x-pem-file"
 }
 
-# BI user for Fabric / Power BI: password (what the connector uses) + key pair, both only in Key Vault.
+# BI user for Fabric (semantic model refresh): password (what the Snowflake connector uses) + key pair, both only in Key Vault.
 resource "random_password" "bi" {
   length      = 40
   special     = false
