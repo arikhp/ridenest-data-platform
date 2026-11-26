@@ -99,6 +99,12 @@ Repo: https://github.com/arikhp/ridenest-data-platform — `main` is protected (
 |---|---|
 | Pull request | `terraform fmt`/`validate` on every root, `plan` for dev (Azure, Snowflake, pipelines), plan summary commented on the PR |
 | Merge to `main` (infra/sql changes) | apply **dev** → apply **preprod** → apply **prod** after manual approval (GitHub Environment `prod`) |
+| Pull request (dbt workflow) | full `dbt build` (models + tests) in `PR_<n>_SILVER` / `PR_<n>_GOLD` on dev data; results commented on the PR |
+| PR closed / merged | `PR_<n>_*` schemas dropped (guarded: only `PR_<number>` prefixes, only in dev) |
+| Merge to `main` (dbt changes) | `dbt build` **dev** → **preprod** → **prod** after manual approval |
+
+dbt jobs read the env's dbt key from **that env's** Key Vault via OIDC, so no Snowflake dbt key is stored in GitHub
+and a dev run cannot read the prod key. Each run keeps `manifest.json` / `run_results.json` as artifacts (30 days).
 
 - Azure login: GitHub OIDC → `id-ridenest-deploy-<env>` managed identity (federated subject
   `repo:arikhp@<owner_id>/ridenest-data-platform@<repo_id>:environment:<env>`). No Azure secret stored.
@@ -126,4 +132,5 @@ cd infra/envs/dev/snowflake && terraform init -backend-config=../../backend.hcl 
 - [x] Generator → ADF → BRONZE (dev: 7 days; preprod/prod: 1 year)
 - [x] dbt SILVER (dev + preprod built; prod via dbt CI/CD, next)
 - [x] dbt GOLD (dev + preprod built)
-- [ ] dbt CI/CD + scheduled runs
+- [x] dbt CI/CD (PR schemas, dev → preprod → prod)
+- [ ] Scheduled daily runs (generator → ADF → dbt)
