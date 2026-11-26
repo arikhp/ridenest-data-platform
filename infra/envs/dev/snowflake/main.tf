@@ -74,12 +74,13 @@ resource "azurerm_key_vault_secret" "svc_private_key" {
 }
 
 module "snowflake" {
-  source                   = "../../../modules/snowflake_env"
-  env                      = local.env
-  azure_tenant_id          = data.azurerm_client_config.current.tenant_id
-  lake_account_name        = data.azurerm_storage_account.lake.name
-  monthly_credit_quota     = var.credit_quota
-  service_user_public_keys = { for k, key in tls_private_key.svc : k => trimspace(replace(replace(key.public_key_pem, "-----BEGIN PUBLIC KEY-----", ""), "-----END PUBLIC KEY-----", "")) }
+  source                         = "../../../modules/snowflake_env"
+  env                            = local.env
+  azure_tenant_id                = data.azurerm_client_config.current.tenant_id
+  lake_account_name              = data.azurerm_storage_account.lake.name
+  monthly_credit_quota           = var.credit_quota
+  transformer_can_create_schemas = true # per-PR dbt schemas
+  service_user_public_keys       = { for k, key in tls_private_key.svc : k => trimspace(replace(replace(key.public_key_pem, "-----BEGIN PUBLIC KEY-----", ""), "-----END PUBLIC KEY-----", "")) }
 }
 
 # Snowflake reads bronze files through its own service principal.

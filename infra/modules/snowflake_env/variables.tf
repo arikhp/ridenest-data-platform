@@ -17,3 +17,9 @@ variable "service_user_public_keys" {
   default     = {}
   description = "RSA public keys (PEM body, no header/footer) for service users: keys `loader` (ADF) and `dbt`. Users are created only when a key is given."
 }
+
+variable "transformer_can_create_schemas" {
+  type        = bool
+  default     = false
+  description = "Let <ENV>_TRANSFORMER create schemas (dev only: per-PR dbt schemas like PR_12_SILVER)."
+}
