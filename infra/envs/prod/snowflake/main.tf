@@ -9,6 +9,7 @@ terraform {
     azurerm   = { source = "hashicorp/azurerm", version = "~> 4.0" }
     snowflake = { source = "snowflakedb/snowflake", version = "~> 2.24" }
     tls       = { source = "hashicorp/tls", version = "~> 4.0" }
+    random    = { source = "hashicorp/random", version = "~> 3.6" }
   }
   backend "azurerm" {
     key = "prod-snowflake.tfstate" # rest comes from ../../backend.hcl
@@ -73,6 +74,30 @@ resource "azurerm_key_vault_secret" "svc_private_key" {
   content_type = "application/x-pem-file"
 }
 
+# BI user for Fabric / Power BI: password (what the connector uses) + key pair, both only in Key Vault.
+resource "random_password" "bi" {
+  length      = 40
+  special     = false
+  min_upper   = 2
+  min_lower   = 2
+  min_numeric = 2
+}
+
+resource "tls_private_key" "bi" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "azurerm_key_vault_secret" "bi" {
+  for_each = {
+    "snowflake-bi-password"    = random_password.bi.result
+    "snowflake-bi-private-key" = tls_private_key.bi.private_key_pem_pkcs8
+  }
+  name         = each.key
+  value        = each.value
+  key_vault_id = data.azurerm_key_vault.env.id
+}
+
 module "snowflake" {
   source                   = "../../../modules/snowflake_env"
   env                      = local.env
@@ -80,6 +105,11 @@ module "snowflake" {
   lake_account_name        = data.azurerm_storage_account.lake.name
   monthly_credit_quota     = var.credit_quota
   service_user_public_keys = { for k, key in tls_private_key.svc : k => trimspace(replace(replace(key.public_key_pem, "-----BEGIN PUBLIC KEY-----", ""), "-----END PUBLIC KEY-----", "")) }
+  bi_user = {
+    password       = random_password.bi.result
+    rsa_public_key = trimspace(replace(replace(tls_private_key.bi.public_key_pem, "-----BEGIN PUBLIC KEY-----", ""), "-----END PUBLIC KEY-----", ""))
+    credit_quota   = 2
+  }
 }
 
 # Snowflake reads bronze files through its own service principal.

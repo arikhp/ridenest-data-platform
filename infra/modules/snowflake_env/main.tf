@@ -252,3 +252,55 @@ resource "snowflake_grant_privileges_to_account_role" "transformer_create_schema
     object_name = snowflake_database.this.name
   }
 }
+
+# ---------------- BI access (Fabric / Power BI) ----------------
+# Its own warehouse + monitor, so dashboard refreshes can never eat the pipeline's credits.
+# LEGACY_SERVICE user: the Power BI Snowflake connector signs in with user + password; a key pair is
+# attached as well so the password can be dropped once key-pair sign-in is used instead.
+resource "snowflake_resource_monitor" "bi" {
+  count           = var.bi_user == null ? 0 : 1
+  name            = "RM_RIDENEST_${local.E}_BI"
+  credit_quota    = var.bi_user.credit_quota
+  frequency       = "MONTHLY"
+  start_timestamp = "IMMEDIATELY"
+  notify_triggers = [75, 90]
+  suspend_trigger = 100
+}
+
+resource "snowflake_warehouse" "bi" {
+  count               = var.bi_user == null ? 0 : 1
+  name                = "WH_${local.E}_BI"
+  warehouse_size      = "XSMALL"
+  auto_suspend        = 60
+  auto_resume         = "true"
+  initially_suspended = true
+  resource_monitor    = snowflake_resource_monitor.bi[0].name
+  comment             = "RideNest ${var.env} BI / dashboards"
+}
+
+resource "snowflake_grant_privileges_to_account_role" "reader_bi_wh" {
+  count             = var.bi_user == null ? 0 : 1
+  account_role_name = snowflake_account_role.r["READER"].name
+  privileges        = ["USAGE"]
+  on_account_object {
+    object_type = "WAREHOUSE"
+    object_name = snowflake_warehouse.bi[0].name
+  }
+}
+
+resource "snowflake_legacy_service_user" "bi" {
+  count             = var.bi_user == null ? 0 : 1
+  name              = "SVC_RIDENEST_${local.E}_BI"
+  password          = var.bi_user.password
+  rsa_public_key    = var.bi_user.rsa_public_key
+  default_role      = snowflake_account_role.r["READER"].name
+  default_warehouse = snowflake_warehouse.bi[0].name
+  default_namespace = "${local.db}.GOLD"
+  comment           = "RideNest ${var.env} BI (Fabric / Power BI), read-only GOLD"
+}
+
+resource "snowflake_grant_account_role" "bi" {
+  count     = var.bi_user == null ? 0 : 1
+  role_name = snowflake_account_role.r["READER"].name
+  user_name = snowflake_legacy_service_user.bi[0].name
+}

@@ -23,3 +23,14 @@ variable "transformer_can_create_schemas" {
   default     = false
   description = "Let <ENV>_TRANSFORMER create schemas (dev only: per-PR dbt schemas like PR_12_SILVER)."
 }
+
+variable "bi_user" {
+  type = object({
+    password       = string
+    rsa_public_key = string
+    credit_quota   = optional(number, 2)
+  })
+  default     = null
+  sensitive   = true
+  description = "Read-only BI user (Fabric / Power BI) on <ENV>_READER with its own XS warehouse and credit cap. Null = none."
+}
