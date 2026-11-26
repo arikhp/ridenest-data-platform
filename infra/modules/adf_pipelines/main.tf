@@ -105,7 +105,7 @@ locals {
   bronze_dir = { for k in ["trip_events", "fleet_vehicles", "fleet_maintenance", "billing_riders", "billing_payments", "billing_promo_codes", "ref_zones", "ref_pricing"] :
   k => { value = "@concat('raw/${k}/', variables('datePath'))", type = "Expression" } }
   parquet_sink = { type = "ParquetSink", storeSettings = { type = "AzureBlobFSWriteSettings" }, formatSettings = { type = "ParquetWriteSettings" } }
-  csv_source   = { type = "DelimitedTextSource", storeSettings = { type = "AzureBlobFSReadSettings", recursive = false }, formatSettings = { type = "DelimitedTextReadSettings" } }
+  csv_source   = { type = "DelimitedTextSource", storeSettings = { type = "AzureBlobFSReadSettings", recursive = false }, formatSettings = { type = "DelimitedTextReadSettings", compressionProperties = null } } # ADF echoes the null back; omitting it = perpetual diff
   pq           = "DS_LAKE_PARQUET"
 
   # landing CSV -> bronze Parquet
