@@ -55,9 +55,14 @@ ZONE_NAMES = {
 MODELS = [("Nimbus S2", "scooter"), ("Nimbus S3", "scooter"), ("Volt E1", "ebike")]
 PROMOS = [("WELCOME20", 20, "2025-01-01", "2027-12-31"), ("BERLIN10", 10, "2026-09-01", "2026-12-31"),
           ("SUMMERTLV", 15, "2026-06-01", "2026-09-30")]
+# history_end anchors the initial history: fleet growth and the base rider pool are computed from this
+# fixed window, so re-running any day (or running one new day) reproduces exactly the same world.
+# After history_end, `new_riders_per_day` riders sign up every day (the company keeps growing).
 PROFILES = {
-    "dev":  dict(days=7,   riders=5_000,  vehicles=600,   trips_per_vehicle=2.6, fleet_start_share=1.0),
-    "full": dict(days=365, riders=50_000, vehicles=2_000, trips_per_vehicle=3.6, fleet_start_share=0.6),
+    "dev":  dict(days=7,   riders=5_000,  vehicles=600,   trips_per_vehicle=2.6, fleet_start_share=1.0,
+                 history_end=date(2026, 11, 24), new_riders_per_day=10),
+    "full": dict(days=365, riders=50_000, vehicles=2_000, trips_per_vehicle=3.6, fleet_start_share=0.6,
+                 history_end=date(2026, 11, 25), new_riders_per_day=70),
 }
 PAYMENT_COLS = ["payment_id", "rider_id", "trip_id", "amount", "currency", "method", "status", "promo_code", "paid_at"]
 RIDER_COLS = ["rider_id", "full_name", "email", "phone", "home_city", "signup_at", "plan", "marketing_opt_in"]
@@ -106,6 +111,10 @@ def summer_index(d: date) -> float:
 class Generator:
     def __init__(self, args, start: date, end: date):
         self.args, self.start, self.end = args, start, end
+        prof = PROFILES[args.profile]
+        self.hist_end = prof["history_end"]
+        self.hist_start = self.hist_end - timedelta(days=prof["days"] - 1)
+        self.new_riders_per_day = prof["new_riders_per_day"]
         self.rng = random.Random(args.seed)
         self.zones = build_zones(self.rng)
         self.zones_by_city = {c: [z for z in self.zones if z.city == c] for c in CITIES}
@@ -118,7 +127,7 @@ class Generator:
         fakers = {c: Faker(CITIES[c]["locale"]) for c in CITIES}
         for f in fakers.values():
             f.seed_instance(self.args.seed)
-        span = (self.end - date(2024, 11, 1)).days
+        span = (self.hist_end - date(2024, 11, 1)).days  # fixed window, independent of this run
         for i in range(self.args.riders):
             city = rng.choices(codes, weights)[0]
             f = fakers[city]
@@ -134,18 +143,38 @@ class Generator:
                 _activity=rng.paretovariate(1.6),
                 _churn=(signup + timedelta(days=rng.expovariate(1 / 240))).date(),
             ))
+        # Growth after the initial history: new sign-ups each day, deterministic per day.
+        n, d = len(out), self.hist_end + timedelta(days=1)
+        while d <= self.end:
+            drng = random.Random(f"{self.args.seed}-signups-{d.isoformat()}")
+            for _ in range(self.new_riders_per_day):
+                n += 1
+                city = drng.choices(codes, weights)[0]
+                f = Faker(CITIES[city]["locale"])
+                f.seed_instance(f"{self.args.seed}-{n}")
+                signup = datetime.combine(d, datetime.min.time()) + timedelta(minutes=drng.randint(0, 1439))
+                out.append(dict(
+                    rider_id=f"R{n:07d}", full_name=f.name(),
+                    email=f"rider{n}@example.{'co.il' if city == 'TLV' else 'eu'}",
+                    phone=f.phone_number()[:30], home_city=city, signup_at=signup,
+                    plan=drng.choices(["pay_as_you_go", "monthly_pass", "student"], [0.75, 0.18, 0.07])[0],
+                    marketing_opt_in=1 if drng.random() < 0.4 else 0,
+                    _activity=drng.paretovariate(1.6),
+                    _churn=(signup + timedelta(days=drng.expovariate(1 / 240))).date(),
+                ))
+            d += timedelta(days=1)
         return out
 
     def _vehicles(self):
         rng, out = random.Random(self.args.seed + 2), []
         codes, weights = list(CITIES), [c["weight"] for c in CITIES.values()]
         n0 = int(self.args.vehicles * self.args.fleet_start_share)
-        total_days = max(1, (self.end - self.start).days)
+        total_days = max(1, (self.hist_end - self.hist_start).days)  # fleet grows over the fixed history window
         for i in range(self.args.vehicles):
             city = rng.choices(codes, weights)[0]
             model, vtype = rng.choices(MODELS, [0.45, 0.35, 0.20])[0]
-            commissioned = (self.start - timedelta(days=rng.randint(30, 600)) if i < n0
-                            else self.start + timedelta(days=int(total_days * (i - n0) / max(1, self.args.vehicles - n0))))
+            commissioned = (self.hist_start - timedelta(days=rng.randint(30, 600)) if i < n0
+                            else self.hist_start + timedelta(days=int(total_days * (i - n0) / max(1, self.args.vehicles - n0))))
             out.append(dict(vehicle_id=f"V{i+1:05d}", model=model, vehicle_type=vtype, city=city,
                             home_zone_id=rng.choice(self.zones_by_city[city]).zone_id, commissioned_on=commissioned))
         return out
@@ -273,7 +302,7 @@ def main():
     p.add_argument("--vehicles", type=int)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--truncate", action=argparse.BooleanOptionalAction, default=None,
-                   help="empty billing.payments first (default: on for the full profile)")
+                   help="empty billing.payments first (default: only for a full-history run)")
     p.add_argument("--skip-lake", action="store_true",
                    help="only (re)write Azure SQL; the lake files are deterministic and already there")
     p.add_argument("--subscription-id", default=None)
@@ -309,7 +338,8 @@ def temporary_firewall_rule(server: str):
 
 def run(args, sfx: str, server: str):
     start = args.end - timedelta(days=args.days - 1)
-    truncate = args.profile == "full" if args.truncate is None else args.truncate
+    # Only a full-history run empties payments; daily runs replace their own day's payments by id.
+    truncate = (args.days >= PROFILES[args.profile]["days"]) if args.truncate is None else args.truncate
     cred = AzureCliCredential()
     lake = Lake(f"stridenest{args.env}{sfx}", cred)
     kv = SecretClient(f"https://kv-ridenest-{args.env}-{sfx[:4]}.vault.azure.net", credential=cred)

@@ -56,7 +56,7 @@ az datafactory pipeline create-run -g rg-ridenest-ilc --factory-name adf-ridenes
 - Azure budget `budget-ridenest-monthly` ($25/month on `rg-ridenest-ilc`): emails the Owner role at 60% and 100% actual, and 100% forecast.
 - Azure SQL serverless pauses after 15 idle minutes.
 - Snowflake resource monitors: 5 / 5 / 10 credits per month (dev / preprod / prod) + 5 on `COMPUTE_WH`.
-- The prod daily trigger stays **off** until the generator runs daily in CI (otherwise the 02:00 run finds no new files).
+- The ADF schedule trigger stays **off**: the nightly chain is orchestrated by GitHub Actions (`daily.yml`), see below.
 
 ## SILVER (dbt)
 dbt-core 1.12 + dbt-snowflake, connecting as `SVC_RIDENEST_<ENV>_DBT` / role `<ENV>_TRANSFORMER` (key pair from Key Vault).
@@ -112,6 +112,20 @@ and a dev run cannot read the prod key. Each run keeps `manifest.json` / `run_re
 - Subscription/tenant/object IDs are GitHub **secrets** (masked in public logs) and git-ignored
   `local.auto.tfvars` files locally; committed `terraform.tfvars` hold only non-identifying settings.
 
+## Nightly run (`daily.yml`)
+Every day at **02:30 UTC** GitHub Actions runs, for prod and for *yesterday*:
+
+1. **Generator** — writes the day's trip events and fleet files to `landing/`, the day's payments (and new riders) to Azure SQL.
+   The world is anchored to a fixed history window, so re-running a day reproduces it exactly; ~70 new riders sign up per day.
+2. **Data Factory** `PL_INGEST_DAILY` (runDate = that day) — landing/SQL → `bronze/raw/…/yyyy/MM/dd` → Snowflake BRONZE; the job waits for it.
+3. **dbt** — `source freshness` (warning if BRONZE is stale) and `dbt build` (SILVER + GOLD + 106 checks).
+
+Any failure fails the workflow (GitHub emails the repo owner). Manual run: *Actions → daily → Run workflow*, choose env and date
+(useful to catch up a missed day).
+
+Prod nightly runs use the GitHub Environment **`prod-ops`**: no approval, `main` branch only, prod identity — a decision by the
+project owner so the nightly job does not wait for a click. Code deployments to prod (`infra.yml`, `dbt.yml`) still need approval.
+
 ## Running Terraform locally
 ```bash
 az login
@@ -133,4 +147,4 @@ cd infra/envs/dev/snowflake && terraform init -backend-config=../../backend.hcl 
 - [x] dbt SILVER (dev + preprod built; prod via dbt CI/CD, next)
 - [x] dbt GOLD (dev + preprod built)
 - [x] dbt CI/CD (PR schemas, dev → preprod → prod)
-- [ ] Scheduled daily runs (generator → ADF → dbt)
+- [x] Scheduled daily runs (generator → ADF → dbt), prod 02:30 UTC

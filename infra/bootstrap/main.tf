@@ -137,3 +137,16 @@ resource "azurerm_consumption_budget_resource_group" "monthly" {
     contact_roles  = ["Owner"]
   }
 }
+
+# Scheduled data runs (daily.yml) use a separate GitHub Environment without the approval gate
+# (owner's decision, 2026-11-26): deployments of prod still need approval, nightly data processing does not.
+# The environment only accepts runs from the main branch.
+resource "azurerm_federated_identity_credential" "gh_ops" {
+  for_each            = var.github_owner == "" ? {} : var.ops_environments
+  name                = "github-env-${each.value}"
+  resource_group_name = azurerm_resource_group.main.name
+  parent_id           = azurerm_user_assigned_identity.deploy[each.key].id
+  audience            = ["api://AzureADTokenExchange"]
+  issuer              = "https://token.actions.githubusercontent.com"
+  subject             = "${local.gh_subject_prefix}:environment:${each.value}"
+}

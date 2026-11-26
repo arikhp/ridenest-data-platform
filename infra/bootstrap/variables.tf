@@ -46,3 +46,9 @@ variable "github_repo_id" {
   default     = ""
   description = "Numeric GitHub repository id (gh api repos/<owner>/<repo> --jq .id)."
 }
+
+variable "ops_environments" {
+  type        = map(string)
+  default     = { prod = "prod-ops" }
+  description = "Extra GitHub Environments (no approval) that may use an env's identity for scheduled data runs, keyed by env. Approved by the project owner on 2026-11-26."
+}
