@@ -1,0 +1,65 @@
+# dbt CI/CD
+#   pull request      -> build + test the whole project in PR_<n>_SILVER / PR_<n>_GOLD on dev data, comment results
+#   PR closed/merged  -> drop the PR schemas
+#   merge to main     -> dbt build dev -> preprod -> (manual approval) prod
+name: dbt
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+    paths: ["dbt/**", ".github/workflows/dbt.yml", ".github/workflows/_dbt-env.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: dbt-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
+jobs:
+  ci:
+    # Runs on every PR (it is a required check); PRs from forks get no OIDC token, so skip them.
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/_dbt-env.yml
+    with:
+      target: dev
+      schema_prefix: PR_${{ github.event.pull_request.number }}
+    secrets: inherit
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/_dbt-env.yml
+    with:
+      target: dev
+      schema_prefix: PR_${{ github.event.pull_request.number }}
+      command: cleanup
+    secrets: inherit
+
+  deploy-dev:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/_dbt-env.yml
+    with:
+      target: dev
+      environment: dev
+    secrets: inherit
+
+  deploy-preprod:
+    needs: deploy-dev
+    uses: ./.github/workflows/_dbt-env.yml
+    with:
+      target: preprod
+      environment: preprod
+    secrets: inherit
+
+  deploy-prod:
+    needs: deploy-preprod
+    uses: ./.github/workflows/_dbt-env.yml
+    with:
+      target: prod
+      environment: prod # requires approval
+    secrets: inherit
