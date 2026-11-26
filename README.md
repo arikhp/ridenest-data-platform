@@ -136,6 +136,28 @@ It is regenerated after each successful nightly prod run (`dbt docs generate --s
 The site is public like the repo: it holds metadata only, no data rows, and the job refuses to publish if the file
 contains the Snowflake account name or key material. A docs failure never fails the data run.
 
+## Executive dashboard in Microsoft Fabric (`fabric/`)
+The executive layer runs in a separate Microsoft Fabric tenant (not the Azure tenant): one workspace per env on the
+Fabric trial capacity, reading Snowflake GOLD through a read-only BI user per env (`SVC_RIDENEST_<ENV>_BI`, key-pair).
+
+```
+GitHub fabric/ ──deploy.py──► RideNest-dev ──promote.py preprod──► RideNest-preprod ──promote.py prod──► RideNest-prod
+(TMDL source)                  Development        Fabric deployment pipeline "RideNest"         Test → Production
+```
+
+| File | Purpose |
+|---|---|
+| `RideNestExecutive.SemanticModel/` | Semantic model as code (TMDL): 3 dimensions, 5 GOLD marts, 36 executive measures, Snowflake import |
+| `deploy.py <env>` | Publish the model from the repo into a workspace (fabric-cicd). Normally only `dev` |
+| `pipeline_setup.py` | Create the deployment pipeline "RideNest" and assign the three workspaces (idempotent) |
+| `promote.py <preprod\|prod>` | Promote one stage through the pipeline, then set that env's Snowflake parameters, bind and refresh |
+| `connect.py <env>` | Create/update the Fabric connection `ridenest-snowflake-<env>` (key-pair from that env's Key Vault), bind, refresh |
+
+Auth: an Azure CLI login to the Fabric tenant kept apart from the RideNest one
+(`AZURE_CONFIG_DIR=~/.azure-fabric az login --allow-no-subscriptions`). The Fabric tenant does not allow app
+registrations, so deploys run as the signed-in user for now; Fabric's API cannot create deployment rules, which is why
+`promote.py` sets the per-env parameters right after each promotion.
+
 ## Running Terraform locally
 ```bash
 az login

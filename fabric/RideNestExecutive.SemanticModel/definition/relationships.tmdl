@@ -1,0 +1,40 @@
+relationship revenue_date
+	fromColumn: 'Revenue Daily'.date_day
+	toColumn: Date.date_day
+
+relationship revenue_city
+	fromColumn: 'Revenue Daily'.city_code
+	toColumn: City.city_code
+
+relationship fleet_date
+	fromColumn: 'Fleet Daily'.date_day
+	toColumn: Date.date_day
+
+relationship fleet_city
+	fromColumn: 'Fleet Daily'.city_code
+	toColumn: City.city_code
+
+relationship zonedaily_date
+	fromColumn: 'Zone Daily'.date_day
+	toColumn: Date.date_day
+
+relationship zonedaily_zone
+	fromColumn: 'Zone Daily'.zone_id
+	toColumn: Zone.zone_id
+
+relationship zone_city
+	fromColumn: Zone.city_code
+	toColumn: City.city_code
+
+relationship maintenance_month
+	fromColumn: 'Maintenance Monthly'.month_start
+	toColumn: Date.date_day
+
+relationship maintenance_city
+	fromColumn: 'Maintenance Monthly'.city_code
+	toColumn: City.city_code
+
+relationship retention_city
+	fromColumn: 'Retention Cohorts'.home_city_code
+	toColumn: City.city_code
+

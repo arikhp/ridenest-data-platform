@@ -1,0 +1,163 @@
+/// City x day demand and revenue (mart_revenue_daily). Raw columns are hidden; use the measures.
+table 'Revenue Daily'
+
+	measure 'Total Trips' = SUM('Revenue Daily'[trips])
+		formatString: #,0
+		displayFolder: Revenue
+
+	measure 'Gross Fare EUR' = SUM('Revenue Daily'[gross_fare_eur])
+		formatString: "€"#,0
+		displayFolder: Revenue
+
+	measure 'Collected EUR' = SUM('Revenue Daily'[collected_eur])
+		formatString: "€"#,0
+		displayFolder: Revenue
+
+	measure 'Refunded EUR' = SUM('Revenue Daily'[refunded_eur])
+		formatString: "€"#,0
+		displayFolder: Revenue
+
+	measure 'Failed EUR' = SUM('Revenue Daily'[failed_eur])
+		formatString: "€"#,0
+		displayFolder: Revenue
+
+	measure 'Collection Rate' = DIVIDE([Collected EUR], [Gross Fare EUR])
+		formatString: 0.0%
+		displayFolder: Revenue
+
+	measure 'Avg Fare EUR' = DIVIDE([Gross Fare EUR], [Total Trips])
+		formatString: "€"#,0.00
+		displayFolder: Revenue
+
+	measure 'Avg Trip Minutes' = DIVIDE(SUMX('Revenue Daily', 'Revenue Daily'[trips] * 'Revenue Daily'[avg_duration_min]), [Total Trips])
+		formatString: #,0.0
+		displayFolder: Revenue
+
+	measure 'Avg Trip Km' = DIVIDE(SUMX('Revenue Daily', 'Revenue Daily'[trips] * 'Revenue Daily'[avg_distance_km]), [Total Trips])
+		formatString: #,0.00
+		displayFolder: Revenue
+
+	measure 'Promo Share' = DIVIDE(SUM('Revenue Daily'[promo_trips]), [Total Trips])
+		formatString: 0.0%
+		displayFolder: Revenue
+
+	measure 'Avg Daily Active Riders' = AVERAGEX(VALUES('Date'[date_day]), CALCULATE(SUM('Revenue Daily'[active_riders])))
+		formatString: #,0
+		displayFolder: Revenue
+
+	measure 'Collected EUR PM' = CALCULATE([Collected EUR], DATEADD('Date'[date_day], -1, MONTH))
+		formatString: "€"#,0
+		displayFolder: Revenue\Trend
+
+	measure 'Collected EUR MoM %' = DIVIDE([Collected EUR] - [Collected EUR PM], [Collected EUR PM])
+		formatString: 0.0%
+		displayFolder: Revenue\Trend
+
+	measure 'Total Trips PM' = CALCULATE([Total Trips], DATEADD('Date'[date_day], -1, MONTH))
+		formatString: #,0
+		displayFolder: Revenue\Trend
+
+	measure 'Total Trips MoM %' = DIVIDE([Total Trips] - [Total Trips PM], [Total Trips PM])
+		formatString: 0.0%
+		displayFolder: Revenue\Trend
+
+	column date_day
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isHidden
+		summarizeBy: none
+		sourceColumn: DATE_DAY
+
+	column city_code
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: CITY_CODE
+
+	column trips
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: TRIPS
+
+	column active_riders
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: ACTIVE_RIDERS
+
+	column vehicles_used
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: VEHICLES_USED
+
+	column gross_fare_eur
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: GROSS_FARE_EUR
+
+	column collected_eur
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: COLLECTED_EUR
+
+	column refunded_eur
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: REFUNDED_EUR
+
+	column failed_eur
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: FAILED_EUR
+
+	column collection_rate
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: COLLECTION_RATE
+
+	column avg_fare_eur
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: AVG_FARE_EUR
+
+	column avg_duration_min
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: AVG_DURATION_MIN
+
+	column avg_distance_km
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: AVG_DISTANCE_KM
+
+	column promo_trips
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: PROMO_TRIPS
+
+	partition 'Revenue Daily' = m
+		mode: import
+		source =
+				let
+				    Source = Snowflake.Databases(SnowflakeServer, SnowflakeWarehouse, [Role = SnowflakeRole]),
+				    Db = Source{[Name = SnowflakeDatabase, Kind = "Database"]}[Data],
+				    Gold = Db{[Name = "GOLD", Kind = "Schema"]}[Data],
+				    Tbl = Gold{[Name = "MART_REVENUE_DAILY", Kind = "Table"]}[Data]
+				in
+				    Tbl
+

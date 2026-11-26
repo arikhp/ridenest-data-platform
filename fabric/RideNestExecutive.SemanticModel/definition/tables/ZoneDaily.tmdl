@@ -1,0 +1,86 @@
+/// Start-zone x day demand (mart_zone_daily). Filtered by City through Zone.
+table 'Zone Daily'
+
+	measure 'Zone Trips' = SUM('Zone Daily'[trips])
+		formatString: #,0
+		displayFolder: Zones
+
+	measure 'Zone Collected EUR' = SUM('Zone Daily'[collected_eur])
+		formatString: "€"#,0
+		displayFolder: Zones
+
+	measure 'Zone Share of City Trips' = DIVIDE([Zone Trips], CALCULATE([Zone Trips], ALL('Zone'), VALUES('Zone'[city_code])))
+		formatString: 0.0%
+		displayFolder: Zones
+
+	measure 'Same-Zone Trip Rate' = DIVIDE(SUMX('Zone Daily', 'Zone Daily'[same_zone_trip_rate] * 'Zone Daily'[trips]), [Zone Trips])
+		formatString: 0.0%
+		displayFolder: Zones
+
+	column date_day
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isHidden
+		summarizeBy: none
+		sourceColumn: DATE_DAY
+
+	column zone_id
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: ZONE_ID
+
+	column zone_name
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: ZONE_NAME
+
+	column city_code
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: CITY_CODE
+
+	column trips
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: TRIPS
+
+	column share_of_city_trips
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: SHARE_OF_CITY_TRIPS
+
+	column collected_eur
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: COLLECTED_EUR
+
+	column avg_duration_min
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: AVG_DURATION_MIN
+
+	column same_zone_trip_rate
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: SAME_ZONE_TRIP_RATE
+
+	partition 'Zone Daily' = m
+		mode: import
+		source =
+				let
+				    Source = Snowflake.Databases(SnowflakeServer, SnowflakeWarehouse, [Role = SnowflakeRole]),
+				    Db = Source{[Name = SnowflakeDatabase, Kind = "Database"]}[Data],
+				    Gold = Db{[Name = "GOLD", Kind = "Schema"]}[Data],
+				    Tbl = Gold{[Name = "MART_ZONE_DAILY", Kind = "Table"]}[Data]
+				in
+				    Tbl
+

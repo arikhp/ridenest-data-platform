@@ -1,0 +1,107 @@
+/// City x day fleet KPIs (mart_fleet_utilization_daily). Ratios are re-weighted in the measures.
+table 'Fleet Daily'
+
+	measure 'Fleet Size' = AVERAGEX(VALUES('Date'[date_day]), CALCULATE(SUM('Fleet Daily'[fleet_size])))
+		formatString: #,0
+		displayFolder: Fleet
+
+	measure 'Deployable Vehicles' = AVERAGEX(VALUES('Date'[date_day]), CALCULATE(SUM('Fleet Daily'[deployable_vehicles])))
+		formatString: #,0
+		displayFolder: Fleet
+
+	measure 'Trips per Vehicle' = DIVIDE(SUM('Fleet Daily'[trips]), SUM('Fleet Daily'[deployable_vehicles]))
+		formatString: #,0.00
+		displayFolder: Fleet
+
+	measure 'Utilization' = DIVIDE(SUMX('Fleet Daily', 'Fleet Daily'[avg_utilization_pct] * 'Fleet Daily'[deployable_vehicles]), SUM('Fleet Daily'[deployable_vehicles]))
+		formatString: 0.0%
+		displayFolder: Fleet
+
+	measure 'Revenue per Vehicle-Day' = DIVIDE(SUMX('Fleet Daily', 'Fleet Daily'[collected_eur_per_deployable_vehicle] * 'Fleet Daily'[deployable_vehicles]), SUM('Fleet Daily'[deployable_vehicles]))
+		formatString: "€"#,0.00
+		displayFolder: Fleet
+
+	measure 'In Maintenance Share' = DIVIDE(SUM('Fleet Daily'[vehicles_in_maintenance]), SUM('Fleet Daily'[fleet_size]))
+		formatString: 0.0%
+		displayFolder: Fleet
+
+	measure 'Avg Battery' = DIVIDE(SUMX('Fleet Daily', 'Fleet Daily'[avg_battery_pct] * 'Fleet Daily'[deployable_vehicles]), SUM('Fleet Daily'[deployable_vehicles])) / 100
+		formatString: 0.0%
+		displayFolder: Fleet
+
+	column date_day
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isHidden
+		summarizeBy: none
+		sourceColumn: DATE_DAY
+
+	column city_code
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: CITY_CODE
+
+	column fleet_size
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: FLEET_SIZE
+
+	column deployable_vehicles
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: DEPLOYABLE_VEHICLES
+
+	column vehicles_in_maintenance
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: VEHICLES_IN_MAINTENANCE
+
+	column trips
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: TRIPS
+
+	column trips_per_deployable_vehicle
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: TRIPS_PER_DEPLOYABLE_VEHICLE
+
+	column avg_utilization_pct
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: AVG_UTILIZATION_PCT
+
+	column collected_eur_per_deployable_vehicle
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: COLLECTED_EUR_PER_DEPLOYABLE_VEHICLE
+
+	column avg_battery_pct
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: AVG_BATTERY_PCT
+
+	partition 'Fleet Daily' = m
+		mode: import
+		source =
+				let
+				    Source = Snowflake.Databases(SnowflakeServer, SnowflakeWarehouse, [Role = SnowflakeRole]),
+				    Db = Source{[Name = SnowflakeDatabase, Kind = "Database"]}[Data],
+				    Gold = Db{[Name = "GOLD", Kind = "Schema"]}[Data],
+				    Tbl = Gold{[Name = "MART_FLEET_UTILIZATION_DAILY", Kind = "Table"]}[Data]
+				in
+				    Tbl
+

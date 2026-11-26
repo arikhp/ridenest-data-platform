@@ -1,0 +1,61 @@
+/// Operating cities (dim_city).
+table 'City'
+
+	column city_code
+		dataType: string
+		summarizeBy: none
+		sourceColumn: CITY_CODE
+
+	column city_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: CITY_NAME
+
+	column country
+		dataType: string
+		summarizeBy: none
+		sourceColumn: COUNTRY
+
+	column timezone
+		dataType: string
+		summarizeBy: none
+		sourceColumn: TIMEZONE
+
+	column currency
+		dataType: string
+		summarizeBy: none
+		sourceColumn: CURRENCY
+
+	column unlock_fee
+		dataType: double
+		summarizeBy: none
+		sourceColumn: UNLOCK_FEE
+
+	column price_per_minute
+		dataType: double
+		summarizeBy: none
+		sourceColumn: PRICE_PER_MINUTE
+
+	column unlock_fee_eur
+		dataType: double
+		formatString: "€"#,0.00
+		summarizeBy: none
+		sourceColumn: UNLOCK_FEE_EUR
+
+	column price_per_minute_eur
+		dataType: double
+		formatString: "€"#,0.0000
+		summarizeBy: none
+		sourceColumn: PRICE_PER_MINUTE_EUR
+
+	partition 'City' = m
+		mode: import
+		source =
+				let
+				    Source = Snowflake.Databases(SnowflakeServer, SnowflakeWarehouse, [Role = SnowflakeRole]),
+				    Db = Source{[Name = SnowflakeDatabase, Kind = "Database"]}[Data],
+				    Gold = Db{[Name = "GOLD", Kind = "Schema"]}[Data],
+				    Tbl = Gold{[Name = "DIM_CITY", Kind = "Table"]}[Data]
+				in
+				    Tbl
+

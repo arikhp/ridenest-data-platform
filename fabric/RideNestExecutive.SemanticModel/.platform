@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "SemanticModel",
+    "displayName": "RideNest Executive",
+    "description": "Executive KPIs on RIDENEST_<ENV>.GOLD (Snowflake). Managed in GitHub; do not edit in the service."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "7d1c5a3e-2f6b-4c8e-9a41-5b0e3c2d9f10"
+  }
+}

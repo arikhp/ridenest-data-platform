@@ -1,0 +1,96 @@
+/// Calendar (dim_date). Marked as the date table.
+table 'Date'
+	dataCategory: Time
+
+	column date_day
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isKey
+		summarizeBy: none
+		sourceColumn: DATE_DAY
+
+	column date_key
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: DATE_KEY
+
+	column year
+		dataType: int64
+		formatString: #,0
+		summarizeBy: none
+		sourceColumn: YEAR
+
+	column quarter
+		dataType: int64
+		formatString: #,0
+		summarizeBy: none
+		sourceColumn: QUARTER
+
+	column month
+		dataType: int64
+		formatString: #,0
+		summarizeBy: none
+		sourceColumn: MONTH
+
+	column month_name_short
+		dataType: string
+		summarizeBy: none
+		sourceColumn: MONTH_NAME_SHORT
+
+	column month_start
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: MONTH_START
+
+	column iso_week
+		dataType: int64
+		formatString: #,0
+		summarizeBy: none
+		sourceColumn: ISO_WEEK
+
+	column week_start
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: WEEK_START
+
+	column iso_day_of_week
+		dataType: int64
+		formatString: #,0
+		summarizeBy: none
+		sourceColumn: ISO_DAY_OF_WEEK
+
+	column day_name_short
+		dataType: string
+		summarizeBy: none
+		sourceColumn: DAY_NAME_SHORT
+
+	column is_weekend
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: IS_WEEKEND
+
+	column is_peak_weekend
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: IS_PEAK_WEEKEND
+
+	column season
+		dataType: string
+		summarizeBy: none
+		sourceColumn: SEASON
+
+	partition 'Date' = m
+		mode: import
+		source =
+				let
+				    Source = Snowflake.Databases(SnowflakeServer, SnowflakeWarehouse, [Role = SnowflakeRole]),
+				    Db = Source{[Name = SnowflakeDatabase, Kind = "Database"]}[Data],
+				    Gold = Db{[Name = "GOLD", Kind = "Schema"]}[Data],
+				    Tbl = Gold{[Name = "DIM_DATE", Kind = "Table"]}[Data]
+				in
+				    Tbl
+

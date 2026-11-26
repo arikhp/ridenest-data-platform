@@ -1,0 +1,78 @@
+/// Monthly first-trip cohorts (mart_rider_retention_monthly). Measures exclude the left-censored first cohort.
+table 'Retention Cohorts'
+
+	measure 'Retention Rate' = CALCULATE(DIVIDE(SUM('Retention Cohorts'[active_riders]), SUM('Retention Cohorts'[cohort_size])), 'Retention Cohorts'[is_left_censored_cohort] = FALSE())
+		formatString: 0.0%
+		displayFolder: Riders
+
+	measure 'Retention M1' = CALCULATE([Retention Rate], 'Retention Cohorts'[months_since_first_trip] = 1)
+		formatString: 0.0%
+		displayFolder: Riders
+
+	measure 'Retention M3' = CALCULATE([Retention Rate], 'Retention Cohorts'[months_since_first_trip] = 3)
+		formatString: 0.0%
+		displayFolder: Riders
+
+	measure 'Retention M6' = CALCULATE([Retention Rate], 'Retention Cohorts'[months_since_first_trip] = 6)
+		formatString: 0.0%
+		displayFolder: Riders
+
+	measure 'New Riders' = CALCULATE(SUM('Retention Cohorts'[cohort_size]), 'Retention Cohorts'[months_since_first_trip] = 0, 'Retention Cohorts'[is_left_censored_cohort] = FALSE())
+		formatString: #,0
+		displayFolder: Riders
+
+	column cohort_month
+		dataType: dateTime
+		formatString: yyyy-mm
+		summarizeBy: none
+		sourceColumn: COHORT_MONTH
+
+	column home_city_code
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: HOME_CITY_CODE
+
+	column months_since_first_trip
+		dataType: int64
+		formatString: #,0
+		summarizeBy: none
+		sourceColumn: MONTHS_SINCE_FIRST_TRIP
+
+	column cohort_size
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: COHORT_SIZE
+
+	column active_riders
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: ACTIVE_RIDERS
+
+	column retention_rate
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: RETENTION_RATE
+
+	column is_left_censored_cohort
+		dataType: boolean
+		isHidden
+		summarizeBy: none
+		sourceColumn: IS_LEFT_CENSORED_COHORT
+
+	partition 'Retention Cohorts' = m
+		mode: import
+		source =
+				let
+				    Source = Snowflake.Databases(SnowflakeServer, SnowflakeWarehouse, [Role = SnowflakeRole]),
+				    Db = Source{[Name = SnowflakeDatabase, Kind = "Database"]}[Data],
+				    Gold = Db{[Name = "GOLD", Kind = "Schema"]}[Data],
+				    Tbl = Gold{[Name = "MART_RIDER_RETENTION_MONTHLY", Kind = "Table"]}[Data]
+				in
+				    Tbl
+

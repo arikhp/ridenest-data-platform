@@ -1,0 +1,90 @@
+/// City x month x issue maintenance (mart_maintenance_monthly).
+table 'Maintenance Monthly'
+
+	measure 'Maintenance Tickets' = SUM('Maintenance Monthly'[tickets])
+		formatString: #,0
+		displayFolder: Maintenance
+
+	measure 'Open Tickets' = SUM('Maintenance Monthly'[open_tickets])
+		formatString: #,0
+		displayFolder: Maintenance
+
+	measure 'Maintenance Cost EUR' = SUM('Maintenance Monthly'[total_cost_eur])
+		formatString: "€"#,0
+		displayFolder: Maintenance
+
+	measure 'Avg Repair Hours' = DIVIDE(SUMX('Maintenance Monthly', 'Maintenance Monthly'[avg_repair_hours] * ('Maintenance Monthly'[tickets] - 'Maintenance Monthly'[open_tickets])), SUM('Maintenance Monthly'[tickets]) - SUM('Maintenance Monthly'[open_tickets]))
+		formatString: #,0.0
+		displayFolder: Maintenance
+
+	measure 'Maintenance Cost per Vehicle-Month' = DIVIDE([Maintenance Cost EUR], SUMX(SUMMARIZE('Maintenance Monthly', 'Maintenance Monthly'[month_start], 'Maintenance Monthly'[city_code]), CALCULATE(MAX('Maintenance Monthly'[avg_fleet_size]))))
+		formatString: "€"#,0.00
+		displayFolder: Maintenance
+
+	column month_start
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isHidden
+		summarizeBy: none
+		sourceColumn: MONTH_START
+
+	column city_code
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: CITY_CODE
+
+	column issue
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ISSUE
+
+	column tickets
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: TICKETS
+
+	column open_tickets
+		dataType: int64
+		formatString: #,0
+		isHidden
+		summarizeBy: none
+		sourceColumn: OPEN_TICKETS
+
+	column total_cost_eur
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: TOTAL_COST_EUR
+
+	column avg_repair_hours
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: AVG_REPAIR_HOURS
+
+	column avg_fleet_size
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: AVG_FLEET_SIZE
+
+	column cost_per_fleet_vehicle_eur
+		dataType: double
+		isHidden
+		summarizeBy: none
+		sourceColumn: COST_PER_FLEET_VEHICLE_EUR
+
+	partition 'Maintenance Monthly' = m
+		mode: import
+		source =
+				let
+				    Source = Snowflake.Databases(SnowflakeServer, SnowflakeWarehouse, [Role = SnowflakeRole]),
+				    Db = Source{[Name = SnowflakeDatabase, Kind = "Database"]}[Data],
+				    Gold = Db{[Name = "GOLD", Kind = "Schema"]}[Data],
+				    Tbl = Gold{[Name = "MART_MAINTENANCE_MONTHLY", Kind = "Table"]}[Data]
+				in
+				    Tbl
+
