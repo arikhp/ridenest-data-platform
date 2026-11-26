@@ -129,6 +129,13 @@ a new issue. The next successful run in that env closes it with a "Recovered" co
 Prod nightly runs use the GitHub Environment **`prod-ops`**: no approval, `main` branch only, prod identity — a decision by the
 project owner so the nightly job does not wait for a click. Code deployments to prod (`infra.yml`, `dbt.yml`) still need approval.
 
+## Data catalog (GitHub Pages)
+**https://arikhp.github.io/ridenest-data-platform/** is the dbt catalog for **prod**: the lineage graph from BRONZE sources to GOLD
+marts, every model and column with its description, tests, catalog tags (layer / domain / PII), and table row counts.
+It is regenerated after each successful nightly prod run (`dbt docs generate --static` → one self-contained HTML file).
+The site is public like the repo: it holds metadata only, no data rows, and the job refuses to publish if the file
+contains the Snowflake account name or key material. A docs failure never fails the data run.
+
 ## Running Terraform locally
 ```bash
 az login
@@ -152,3 +159,4 @@ cd infra/envs/dev/snowflake && terraform init -backend-config=../../backend.hcl 
 - [x] dbt CI/CD (PR schemas, dev → preprod → prod)
 - [x] Scheduled daily runs (generator → ADF → dbt), prod 02:30 UTC
 - [x] Failure alerts (GitHub issue per env, auto-closed on recovery)
+- [x] Data catalog site (dbt docs on GitHub Pages, refreshed nightly)
