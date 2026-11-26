@@ -24,7 +24,7 @@ to open a temporary SQL firewall rule "generator-temp" for your current IP, remo
 """
 from __future__ import annotations
 
-import argparse, contextlib, csv, hashlib, io, itertools, json, math, random, subprocess, time, urllib.request, uuid
+import argparse, contextlib, csv, hashlib, io, itertools, json, math, random, re, subprocess, time, urllib.request, uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -64,6 +64,7 @@ PROFILES = {
     "full": dict(days=365, riders=50_000, vehicles=2_000, trips_per_vehicle=3.6, fleet_start_share=0.6,
                  history_end=date(2026, 11, 25), new_riders_per_day=70),
 }
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 PAYMENT_COLS = ["payment_id", "rider_id", "trip_id", "amount", "currency", "method", "status", "promo_code", "paid_at"]
 RIDER_COLS = ["rider_id", "full_name", "email", "phone", "home_city", "signup_at", "plan", "marketing_opt_in"]
 
@@ -389,10 +390,14 @@ def run(args, sfx: str, server: str):
         futures.append(pool.submit(put, f"fleet/{part}/vehicles.csv", csv_bytes(fleet)))
         futures.append(pool.submit(put, f"fleet/{part}/maintenance.csv", csv_bytes(maint)))
         if not truncate:  # incremental re-run of specific days: replace by id
+            # pymssql sends str parameters as N'...' (nvarchar); against the varchar PK that forces an
+            # implicit conversion and a full scan of the table per statement (~4 min each on 2M rows).
+            # The ids are generated UUIDs, so validate them and inline them as varchar literals -> index seeks.
             ids = [r[0] for r in payments]
+            assert all(UUID_RE.fullmatch(x) for x in ids), "unexpected payment_id format"
             for j in range(0, len(ids), 1000):
-                cur.execute("DELETE FROM billing.payments WHERE payment_id IN (" + ",".join(["%s"] * len(ids[j:j+1000])) + ")",
-                            tuple(ids[j:j + 1000]))
+                cur.execute("DELETE FROM billing.payments WHERE payment_id IN ("
+                            + ",".join(f"'{x}'" for x in ids[j:j + 1000]) + ")")
             conn.commit()
         pending += payments
         if len(pending) >= 100_000 or i == args.days - 1:
