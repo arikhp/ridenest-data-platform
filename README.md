@@ -20,7 +20,7 @@ Architecture diagram: see [docs/architecture.md](docs/architecture.md).
 | `sql/00_snowflake_bootstrap.sql` | One-off: creates `TERRAFORM_SVC` (run with **Run All**) |
 | `sql/bronze/` | BRONZE load SQL executed by ADF: daily partition replace, and full reload |
 | `generator/` | Python mock-data generator (`dev` and `full` profiles) |
-| `dbt/` | Filled in the next step |
+| `dbt/` | dbt project: SILVER models + tests (GOLD next) |
 
 ## Conventions
 - **All Azure resources live in one resource group, `rg-ridenest-ilc` (Israel Central).** Environments are
@@ -58,6 +58,28 @@ az datafactory pipeline create-run -g rg-ridenest-ilc --factory-name adf-ridenes
 - Snowflake resource monitors: 5 / 5 / 10 credits per month (dev / preprod / prod) + 5 on `COMPUTE_WH`.
 - The prod daily trigger stays **off** until the generator runs daily in CI (otherwise the 02:00 run finds no new files).
 
+## SILVER (dbt)
+dbt-core 1.12 + dbt-snowflake, connecting as `SVC_RIDENEST_<ENV>_DBT` / role `<ENV>_TRANSFORMER` (key pair from Key Vault).
+
+| Model | What it does |
+|---|---|
+| `trip_events` | Incremental (merge on `event_id`). Dedups ~1% duplicate deliveries, local time → UTC, (0,0) GPS → NULL |
+| `trips` | Pairs start/end events; duration, nearest start/end zone, fare in EUR; flags bad trips (`dq_issue`, `is_valid`) instead of dropping them |
+| `trips_rejected` | View of the quarantined trips and why |
+| `payments` | Typed, latest version per payment, `amount_eur` |
+| `riders`, `vehicles` | Current state from the latest snapshot; rider PII columns tagged `PII = high` |
+| `vehicle_status_daily`, `maintenance_tickets` | Typed; tickets with a future close time count as open |
+| `zones`, `cities`, `promo_codes`, seed `fx_rates_to_eur` | Reference data |
+
+57 tests (keys, accepted values, relationships, consistency of valid trips, rejected-trip budget < 2%).
+Every object gets `LAYER = silver`; columns with `config.meta.pii` get the `PII` tag (catalog).
+
+```bash
+cd dbt && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/dbt deps
+source ./env.sh dev          # loads the dbt key from Key Vault into memory
+.venv/bin/dbt build          # SILVER on dev; full year on preprod builds in ~35 s on an XS warehouse
+```
+
 ## CI/CD (GitHub Actions)
 Repo: https://github.com/arikhp/ridenest-data-platform — `main` is protected (PR required; checks `fmt + validate` and `plan-dev / plan dev` must pass).
 
@@ -90,4 +112,6 @@ cd infra/envs/dev/snowflake && terraform init -backend-config=../../backend.hcl 
 - [x] Snowflake dev / preprod / prod, incl. cross-cloud read of the Azure bronze container (verified with LIST @ADLS_STAGE)
 - [x] GitHub repo + Actions (`infra.yml`): PR plan, dev → preprod → prod (approval)
 - [x] Generator → ADF → BRONZE (dev: 7 days; preprod/prod: 1 year)
-- [ ] dbt SILVER / GOLD
+- [x] dbt SILVER (dev + preprod built; prod via dbt CI/CD, next)
+- [ ] dbt GOLD
+- [ ] dbt CI/CD + scheduled runs

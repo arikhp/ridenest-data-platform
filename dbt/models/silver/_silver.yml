@@ -1,0 +1,157 @@
+version: 2
+
+models:
+  - name: trip_events
+    description: >
+      One row per ride-app event, deduplicated (BRONZE has ~1% duplicate deliveries), typed, with
+      timestamps in UTC and the original local time kept. A (0,0) GPS reading becomes NULL + is_gps_missing.
+      Incremental (merge on event_id).
+    columns:
+      - name: event_id
+        description: Unique event id from the app.
+        data_tests: [unique, not_null]
+      - name: event_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: { values: ["trip_started", "trip_ended"] }
+      - name: trip_id
+        data_tests: [not_null]
+      - name: city_code
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["TLV", "BER", "LIS"] }
+      - name: event_ts_utc
+        description: Event time in UTC (converted from the device's local time + offset).
+        data_tests: [not_null]
+      - name: event_ts_local
+        description: Event time as reported by the device, with its UTC offset.
+      - name: is_gps_missing
+        description: True when the device sent (0,0); lat/lon are then NULL.
+
+  - name: trips
+    description: >
+      One row per trip: start and end event paired, duration, start/end zone (nearest zone centroid in the
+      same city), fare in local currency and EUR. Problem trips are kept and flagged: `dq_issue` gives the
+      reason and `is_valid` is false. GOLD uses only valid trips.
+    columns:
+      - name: trip_id
+        data_tests: [unique, not_null]
+      - name: rider_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: { to: "ref('riders')", field: rider_id }
+      - name: vehicle_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: { to: "ref('vehicles')", field: vehicle_id }
+      - name: start_zone_id
+        data_tests:
+          - relationships:
+              arguments: { to: "ref('zones')", field: zone_id }
+      - name: trip_date_local
+        description: Calendar date of the trip start in the city's local time (the business day).
+      - name: duration_min
+        description: Minutes between start and end (UTC).
+      - name: fare_amount_eur
+        description: Fare converted with fx_rates_to_eur.
+      - name: dq_issue
+        description: Why the trip is not valid (NULL when valid).
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["missing_start", "missing_end", "non_positive_duration", "implausible_duration", "missing_end_gps"] }
+      - name: is_valid
+        data_tests: [not_null]
+
+  - name: trips_rejected
+    description: Quarantine view of trips excluded from GOLD, with the reason. Monitor this for source data quality.
+
+  - name: payments
+    description: One row per payment (latest loaded version), typed, with amount in EUR.
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+      - name: trip_id
+        description: Trip that was paid for. A few payments reference trips that were rejected in `trips` — those still exist there.
+        data_tests:
+          - relationships:
+              arguments: { to: "ref('trips')", field: trip_id }
+              config: { severity: warn }
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["EUR", "ILS"] }
+      - name: payment_status
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["succeeded", "failed", "refunded"] }
+      - name: amount_eur
+        data_tests: [not_null]
+      - name: paid_at_utc
+        data_tests: [not_null]
+
+  - name: riders
+    description: Current state of each rider from the latest billing snapshot. Contains personal data (PII tag on columns).
+    columns:
+      - name: rider_id
+        data_tests: [unique, not_null]
+      - name: full_name
+        config: { meta: { pii: high } }
+      - name: email
+        config: { meta: { pii: high } }
+      - name: phone
+        config: { meta: { pii: high } }
+      - name: home_city_code
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["TLV", "BER", "LIS"] }
+
+  - name: vehicles
+    description: Current attributes of each vehicle (from its latest daily fleet snapshot).
+    columns:
+      - name: vehicle_id
+        data_tests: [unique, not_null]
+      - name: vehicle_type
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["scooter", "ebike"] }
+
+  - name: vehicle_status_daily
+    description: End-of-day status of every vehicle, one row per vehicle per day.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["vehicle_id", "snapshot_date"] }
+    columns:
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["available", "in_use", "charging", "maintenance", "retired"] }
+
+  - name: maintenance_tickets
+    description: Maintenance tickets. closed_at is NULL (and is_open true) while the ticket's planned close time is still in the future.
+    columns:
+      - name: ticket_id
+        data_tests: [unique, not_null]
+      - name: vehicle_id
+        data_tests:
+          - relationships:
+              arguments: { to: "ref('vehicles')", field: vehicle_id }
+
+  - name: zones
+    description: Operating zones and their centroids.
+    columns:
+      - name: zone_id
+        data_tests: [unique, not_null]
+
+  - name: cities
+    description: Operating cities and their tariff.
+    columns:
+      - name: city_code
+        data_tests: [unique, not_null]
+
+  - name: promo_codes
+    columns:
+      - name: promo_code
+        data_tests: [unique, not_null]

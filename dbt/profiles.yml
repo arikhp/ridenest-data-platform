@@ -1,0 +1,44 @@
+# No secrets here. Required env vars:
+#   SNOWFLAKE_ACCOUNT            e.g. QKVPWRB-GB28666
+#   SNOWFLAKE_DBT_PRIVATE_KEY    PEM of SVC_RIDENEST_<ENV>_DBT (Key Vault secret `snowflake-dbt-private-key`)
+#   DBT_TARGET                   dev | preprod | prod   (default dev)
+#   DBT_SCHEMA_PREFIX            optional, e.g. PR_12 -> builds into PR_12_SILVER (CI)
+ridenest:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      authenticator: snowflake_jwt
+      private_key: "{{ env_var('SNOWFLAKE_DBT_PRIVATE_KEY') }}"
+      user: SVC_RIDENEST_DEV_DBT
+      role: DEV_TRANSFORMER
+      database: RIDENEST_DEV
+      warehouse: WH_DEV_TRANSFORM
+      schema: SILVER
+      threads: 8
+      query_tag: dbt-ridenest-dev
+    preprod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      authenticator: snowflake_jwt
+      private_key: "{{ env_var('SNOWFLAKE_DBT_PRIVATE_KEY') }}"
+      user: SVC_RIDENEST_PREPROD_DBT
+      role: PREPROD_TRANSFORMER
+      database: RIDENEST_PREPROD
+      warehouse: WH_PREPROD_TRANSFORM
+      schema: SILVER
+      threads: 8
+      query_tag: dbt-ridenest-preprod
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      authenticator: snowflake_jwt
+      private_key: "{{ env_var('SNOWFLAKE_DBT_PRIVATE_KEY') }}"
+      user: SVC_RIDENEST_PROD_DBT
+      role: PROD_TRANSFORMER
+      database: RIDENEST_PROD
+      warehouse: WH_PROD_TRANSFORM
+      schema: SILVER
+      threads: 8
+      query_tag: dbt-ridenest-prod
