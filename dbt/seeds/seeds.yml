@@ -1,0 +1,14 @@
+version: 2
+seeds:
+  - name: fx_rates_to_eur
+    description: Static FX rates used to report every amount in EUR. One rate per currency (mock; a real platform would load daily ECB rates).
+    config:
+      column_types:
+        currency: "varchar(3)"
+        rate_to_eur: "number(12, 6)"
+        valid_from: "date"
+    columns:
+      - name: currency
+        data_tests: [unique, not_null]
+      - name: rate_to_eur
+        data_tests: [not_null]

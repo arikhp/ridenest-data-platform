@@ -1,0 +1,33 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Raw data exactly as landed by Data Factory (one VARIANT per record + file lineage).
+    database: "{{ target.database }}"
+    schema: BRONZE
+    quoting: { database: false, schema: false, identifier: false }
+    config:
+      loaded_at_field: _LOADED_AT
+      freshness:
+        warn_after: { count: 30, period: hour }
+        error_after: { count: 54, period: hour }
+    tables:
+      - name: raw_trip_events
+        description: Ride-app events (trip_started / trip_ended), NDJSON. Contains ~1% duplicate deliveries.
+      - name: raw_billing_payments
+        description: Billing DB payments (Azure SQL), Parquet. Daily slices + initial load.
+      - name: raw_billing_riders
+        description: Billing DB riders, full snapshot per load.
+      - name: raw_billing_promo_codes
+        description: Billing DB promo codes, full snapshot per load.
+        config: { freshness: null }
+      - name: raw_fleet_vehicles
+        description: Fleet export, one row per vehicle per day (end-of-day snapshot). All values arrive as strings.
+      - name: raw_fleet_maintenance
+        description: Fleet maintenance tickets opened per day. All values arrive as strings.
+      - name: raw_ref_zones
+        description: Static zone reference (centroids). All values arrive as strings.
+        config: { freshness: null }
+      - name: raw_ref_pricing
+        description: Static per-city pricing. All values arrive as strings.
+        config: { freshness: null }

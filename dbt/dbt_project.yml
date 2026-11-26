@@ -1,0 +1,31 @@
+name: ridenest
+version: "1.0.0"
+config-version: 2
+profile: ridenest
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  ridenest:
+    +persist_docs: { relation: true, columns: true } # descriptions show up in Snowflake / Snowsight
+    silver:
+      +schema: silver
+      +materialized: table
+      +tags: ["silver"]
+      # catalog: LAYER tag on every object + PII tag on columns whose meta says so
+      +post-hook: ["{{ apply_catalog_tags('silver') }}"]
+
+seeds:
+  ridenest:
+    +schema: silver
+    +tags: ["silver", "reference"]
+
+data_tests:
+  ridenest:
+    +store_failures: false
