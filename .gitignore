@@ -23,3 +23,6 @@ dbt/**/logs/
 # OS
 .DS_Store
 dbt/.user.yml
+
+# Fabric deploy tooling
+fabric/.venv/

@@ -1,0 +1,46 @@
+/// Operating zones (dim_zone).
+table 'Zone'
+
+	column zone_id
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ZONE_ID
+
+	column zone_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ZONE_NAME
+
+	column city_code
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: CITY_CODE
+
+	column city_name
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: CITY_NAME
+
+	column centroid_lat
+		dataType: double
+		summarizeBy: none
+		sourceColumn: CENTROID_LAT
+
+	column centroid_lon
+		dataType: double
+		summarizeBy: none
+		sourceColumn: CENTROID_LON
+
+	partition 'Zone' = m
+		mode: import
+		source =
+				let
+				    Source = Snowflake.Databases(SnowflakeServer, SnowflakeWarehouse, [Role = SnowflakeRole]),
+				    Db = Source{[Name = SnowflakeDatabase, Kind = "Database"]}[Data],
+				    Gold = Db{[Name = "GOLD", Kind = "Schema"]}[Data],
+				    Tbl = Gold{[Name = "DIM_ZONE", Kind = "Table"]}[Data]
+				in
+				    Tbl
+

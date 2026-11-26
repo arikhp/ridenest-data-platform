@@ -1,0 +1,8 @@
+expression SnowflakeServer = "qkvpwrb-gb28666.snowflakecomputing.com" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+
+expression SnowflakeWarehouse = "WH_DEV_BI" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+
+expression SnowflakeRole = "DEV_READER" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+
+expression SnowflakeDatabase = "RIDENEST_DEV" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+

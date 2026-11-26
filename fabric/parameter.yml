@@ -1,0 +1,11 @@
+# fabric-cicd find/replace per environment: the model source holds dev values.
+find_replace:
+  - find_value: "WH_DEV_BI"
+    replace_value: { dev: "WH_DEV_BI", preprod: "WH_PREPROD_BI", prod: "WH_PROD_BI" }
+    item_type: "SemanticModel"
+  - find_value: "DEV_READER"
+    replace_value: { dev: "DEV_READER", preprod: "PREPROD_READER", prod: "PROD_READER" }
+    item_type: "SemanticModel"
+  - find_value: "RIDENEST_DEV"
+    replace_value: { dev: "RIDENEST_DEV", preprod: "RIDENEST_PREPROD", prod: "RIDENEST_PROD" }
+    item_type: "SemanticModel"
