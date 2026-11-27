@@ -213,6 +213,13 @@ resource "azurerm_role_assignment" "eventgrid_queue_sender" {
   principal_id         = azurerm_eventgrid_system_topic.lake.identity[0].principal_id
 }
 
+# Event Grid validates delivery access when the subscription is created; a fresh role assignment takes a
+# minute or two to take effect, so wait for it (first apply failed with "Managed Identity Authorization Error").
+resource "time_sleep" "eventgrid_queue_role" {
+  create_duration = "120s"
+  triggers        = { role = azurerm_role_assignment.eventgrid_queue_sender.id }
+}
+
 resource "azurerm_eventgrid_system_topic_event_subscription" "snowpipe_api" {
   name                 = "evgs-snowpipe-api"
   system_topic         = azurerm_eventgrid_system_topic.lake.name
@@ -239,7 +246,7 @@ resource "azurerm_eventgrid_system_topic_event_subscription" "snowpipe_api" {
     event_time_to_live    = 1440
   }
 
-  depends_on = [azurerm_role_assignment.eventgrid_queue_sender]
+  depends_on = [time_sleep.eventgrid_queue_role]
 }
 
 # ---------------- Alerting (optional e-mail) ----------------
