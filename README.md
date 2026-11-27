@@ -60,7 +60,7 @@ az datafactory pipeline create-run -g rg-ridenest-ilc --factory-name adf-ridenes
 ScootTrack mock API (func-ridenest-mockapi-<env>) ─┐  X-Api-Key, pages, 429s, late + duplicate readings
 Open-Meteo (real, keyless) ────────────────────────┤
                                                    ▼
-  func-ridenest-ingest-<env>  timer 0 */10 * * * *  (+ POST /backfill)   cursor in strnfn<env><sfx>/ingest-state
+  func-ridenest-ingest-<env>  timer 0 */10 * * * *  (+ POST /api/backfill)   cursor in strnfn<env><sfx>/ingest-state
         │ NDJSON, one file per source per 10-min window
         ▼
   ADLS bronze/raw/api_<source>/yyyy/MM/dd/HH/<source>_<yyyymmddTHHMM>.json

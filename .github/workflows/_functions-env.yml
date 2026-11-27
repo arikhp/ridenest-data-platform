@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          HOST=$(az functionapp show -g "$RG" -n "$MOCK_APP" --query defaultHostName -o tsv)
+          HOST=$(az functionapp show -g "$RG" -n "$MOCK_APP" --query "properties.defaultHostName || defaultHostName" -o tsv)
           KEY=$(az keyvault secret show --vault-name "$KV" -n mockapi-key --query value -o tsv); echo "::add-mask::$KEY"
           for i in $(seq 1 20); do  # first request after a deploy cold-starts the app
             if curl -fsS "https://$HOST/v1/health"; then break; fi
@@ -116,12 +116,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          HOST=$(az functionapp show -g "$RG" -n "$INGEST_APP" --query defaultHostName -o tsv)
-          FKEY=$(az functionapp keys list -g "$RG" -n "$INGEST_APP" --query functionKeys.default -o tsv); echo "::add-mask::$FKEY"
+          HOST=$(az functionapp show -g "$RG" -n "$INGEST_APP" --query "properties.defaultHostName || defaultHostName" -o tsv)
+          FKEY=$(az rest --method post --uri "$(az functionapp show -g "$RG" -n "$INGEST_APP" --query id -o tsv)/host/default/listKeys?api-version=2023-12-01" --query functionKeys.default -o tsv); echo "::add-mask::$FKEY"
           END=$(date -u -d '-2 min' +%s); END=$(( END - END % 600 )); START=$(( END - 600 ))
           FROM=$(date -u -d "@$START" +%FT%TZ); TO=$(date -u -d "@$END" +%FT%TZ)
           for _ in $(seq 1 10); do
-            CODE=$(curl -s -o "$RUNNER_TEMP/bf.json" -w '%{http_code}' -X POST "https://$HOST/backfill?code=$FKEY" \
+            CODE=$(curl -s -o "$RUNNER_TEMP/bf.json" -w '%{http_code}' -X POST "https://$HOST/api/backfill?code=$FKEY" \
                    -H 'Content-Type: application/json' -d "{\"from\":\"$FROM\",\"to\":\"$TO\"}")
             [ "$CODE" = 200 ] && break; echo "backfill -> $CODE, retrying"; sleep 15
           done

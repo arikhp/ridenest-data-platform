@@ -1,7 +1,7 @@
 """RideNest API ingestion (Azure Functions, Python v2 model).
 
   ingest_timer   every 10 min (disabled in dev via AzureWebJobs.ingest_timer.Disabled)
-  POST /backfill {"from": iso, "to": iso, "sources": [...]}   function key; re-pulls a range (max 7 days)
+  POST /api/backfill {"from": iso, "to": iso, "sources": [...]}   function key; re-pulls a range (max 7 days)
 
 Identity: the app's system-assigned managed identity (lake: Blob Data Contributor; state account: Blob Data Owner).
 """

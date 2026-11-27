@@ -59,8 +59,8 @@ jobs:
           set -euo pipefail
           SFX=$(printf "%s" "${{ secrets.AZURE_SUBSCRIPTION_ID }}" | sha1sum | cut -c1-6)
           APP="func-ridenest-ingest-$ENV-$SFX"
-          HOST=$(az functionapp show -g "$RG" -n "$APP" --query defaultHostName -o tsv)
-          FKEY=$(az functionapp keys list -g "$RG" -n "$APP" --query functionKeys.default -o tsv); echo "::add-mask::$FKEY"
+          HOST=$(az functionapp show -g "$RG" -n "$APP" --query "properties.defaultHostName || defaultHostName" -o tsv)
+          FKEY=$(az rest --method post --uri "$(az functionapp show -g "$RG" -n "$APP" --query id -o tsv)/host/default/listKeys?api-version=2023-12-01" --query functionKeys.default -o tsv); echo "::add-mask::$FKEY"
           START=$(date -u -d "$FROM" +%s)
           if [ -n "$TO" ]; then END=$(date -u -d "$TO" +%s); else END=$(date -u +%s); fi
           [ "$END" -gt "$START" ] || { echo "::error::to must be after from"; exit 1; }
@@ -73,7 +73,7 @@ jobs:
             N=$(( T + 21600 )); [ "$N" -gt "$END" ] && N=$END
             F=$(date -u -d "@$T" +%FT%TZ); U=$(date -u -d "@$N" +%FT%TZ)
             for i in 1 2 3 4 5; do
-              CODE=$(curl -s -o "$RUNNER_TEMP/out.json" -w '%{http_code}' --max-time 230 -X POST "https://$HOST/backfill?code=$FKEY" \
+              CODE=$(curl -s -o "$RUNNER_TEMP/out.json" -w '%{http_code}' --max-time 230 -X POST "https://$HOST/api/backfill?code=$FKEY" \
                      -H 'Content-Type: application/json' -d "{\"from\":\"$F\",\"to\":\"$U\",\"sources\":$SRC_JSON}") || CODE=000
               [ "$CODE" = 200 ] && break; echo "$F: HTTP $CODE, retry $i"; sleep 20
             done

@@ -141,7 +141,7 @@ resource "azurerm_function_app_flex_consumption" "ingest" {
     MOCK_API_BASE_URL = "https://${azurerm_function_app_flex_consumption.mockapi.default_hostname}"
     LAKE_BLOB_URL     = azurerm_storage_account.lake.primary_blob_endpoint
     STATE_BLOB_URL    = azurerm_storage_account.functions.primary_blob_endpoint
-    # dev: no schedule, data only through POST /backfill (api-backfill.yml)
+    # dev: no schedule, data only through POST /api/backfill (api-backfill.yml)
     "AzureWebJobs.ingest_timer.Disabled" = var.ingest_schedule_enabled ? "false" : "true"
   })
 
