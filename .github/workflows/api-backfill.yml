@@ -1,0 +1,86 @@
+# Re-pull the external APIs for a time range (any env). This is the ONLY way data reaches dev, whose
+# 10-minute timer is off. Same file names as the timer, so re-running a range is safe (Snowpipe never loads
+# a file name twice; SILVER dedupes on the record key).
+#   from / to : UTC, yyyy-mm-dd or yyyy-mm-ddTHH:MM. `to` is exclusive; max 7 days per run.
+name: api-backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment
+        type: choice
+        options: [dev, preprod, prod]
+        default: dev
+      from:
+        description: Start (UTC), e.g. 2026-11-20 or 2026-11-20T06:00
+        type: string
+        required: true
+      to:
+        description: End, exclusive (UTC). Empty = now.
+        type: string
+        default: ""
+      sources:
+        description: Comma-separated (vehicle_telemetry,weather)
+        type: string
+        default: vehicle_telemetry,weather
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: api-backfill-${{ inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: backfill ${{ inputs.env }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: ${{ inputs.env == 'prod' && 'prod-ops' || inputs.env }}
+    env:
+      ENV: ${{ inputs.env }}
+      RG: rg-ridenest-ilc
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Backfill in 6-hour chunks
+        shell: bash
+        env:
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+          SOURCES: ${{ inputs.sources }}
+        run: |
+          set -euo pipefail
+          SFX=$(printf "%s" "${{ secrets.AZURE_SUBSCRIPTION_ID }}" | sha1sum | cut -c1-6)
+          APP="func-ridenest-ingest-$ENV-$SFX"
+          HOST=$(az functionapp show -g "$RG" -n "$APP" --query defaultHostName -o tsv)
+          FKEY=$(az functionapp keys list -g "$RG" -n "$APP" --query functionKeys.default -o tsv); echo "::add-mask::$FKEY"
+          START=$(date -u -d "$FROM" +%s)
+          if [ -n "$TO" ]; then END=$(date -u -d "$TO" +%s); else END=$(date -u +%s); fi
+          [ "$END" -gt "$START" ] || { echo "::error::to must be after from"; exit 1; }
+          [ $(( END - START )) -le $(( 7 * 86400 )) ] || { echo "::error::max 7 days per run"; exit 1; }
+          SRC_JSON=$(python3 -c "import json,sys; print(json.dumps([s.strip() for s in sys.argv[1].split(',') if s.strip()]))" "$SOURCES")
+          echo "### API backfill — $ENV — $(date -u -d "@$START" +%FT%TZ) → $(date -u -d "@$END" +%FT%TZ)" >> "$GITHUB_STEP_SUMMARY"
+          echo "| chunk | result |" >> "$GITHUB_STEP_SUMMARY"; echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          T=$START
+          while [ "$T" -lt "$END" ]; do
+            N=$(( T + 21600 )); [ "$N" -gt "$END" ] && N=$END
+            F=$(date -u -d "@$T" +%FT%TZ); U=$(date -u -d "@$N" +%FT%TZ)
+            for i in 1 2 3 4 5; do
+              CODE=$(curl -s -o "$RUNNER_TEMP/out.json" -w '%{http_code}' --max-time 230 -X POST "https://$HOST/backfill?code=$FKEY" \
+                     -H 'Content-Type: application/json' -d "{\"from\":\"$F\",\"to\":\"$U\",\"sources\":$SRC_JSON}") || CODE=000
+              [ "$CODE" = 200 ] && break; echo "$F: HTTP $CODE, retry $i"; sleep 20
+            done
+            [ "$CODE" = 200 ] || { cat "$RUNNER_TEMP/out.json" || true; echo "::error::chunk $F failed"; exit 1; }
+            echo "$F → $U: $(cat "$RUNNER_TEMP/out.json")"
+            echo "| $F | \`$(cat "$RUNNER_TEMP/out.json")\` |" >> "$GITHUB_STEP_SUMMARY"
+            T=$N
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Snowpipe loads the files within a few minutes; SILVER/GOLD pick them up on the next dbt build (daily.yml)." >> "$GITHUB_STEP_SUMMARY"

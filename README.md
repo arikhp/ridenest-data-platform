@@ -21,6 +21,9 @@ Architecture diagram: see [docs/architecture.md](docs/architecture.md).
 | `sql/bronze/` | BRONZE load SQL executed by ADF: daily partition replace, and full reload |
 | `generator/` | Python mock-data generator (`dev` and `full` profiles) |
 | `dbt/` | dbt project: SILVER + GOLD models and tests |
+| `functions/mock_api` | "ScootTrack" mock IoT vendor API (Azure Function): vehicle telemetry with API key, paging, 429s |
+| `functions/ingest` | 10-minute API pull (Azure Function): ScootTrack + Open-Meteo weather → `bronze/raw/api_*` |
+| `infra/modules/azure_env/api_ingest.tf`, `infra/modules/snowflake_env/streaming.tf` | Function Apps, Event Grid → queue; notification integration, BRONZE `RAW_API_*` tables, Snowpipes |
 
 ## Conventions
 - **All Azure resources live in one resource group, `rg-ridenest-ilc` (Israel Central).** Environments are
@@ -51,6 +54,44 @@ cd generator && python3 -m venv .venv && .venv/bin/pip install -r requirements.t
 .venv/bin/python ridenest_gen.py --env prod --profile full --end 2026-11-25
 az datafactory pipeline create-run -g rg-ridenest-ilc --factory-name adf-ridenest-prod-<suffix> -n PL_BACKFILL
 ```
+
+## External APIs every 10 minutes (`functions/`)
+```
+ScootTrack mock API (func-ridenest-mockapi-<env>) ─┐  X-Api-Key, pages, 429s, late + duplicate readings
+Open-Meteo (real, keyless) ────────────────────────┤
+                                                   ▼
+  func-ridenest-ingest-<env>  timer 0 */10 * * * *  (+ POST /backfill)   cursor in strnfn<env><sfx>/ingest-state
+        │ NDJSON, one file per source per 10-min window
+        ▼
+  ADLS bronze/raw/api_<source>/yyyy/MM/dd/HH/<source>_<yyyymmddTHHMM>.json
+        │ Event Grid BlobCreated ─► lake queue `snowpipe-events`
+        ▼
+  NI_RIDENEST_<ENV>_LAKE_EVENTS ─► Snowpipe BRONZE.PIPE_API_<SOURCE> ─► BRONZE.RAW_API_<SOURCE>   (~1 min after the file)
+        ▼ dbt (nightly)
+  SILVER vehicle_telemetry, weather_observations ─► GOLD fct_vehicle_telemetry_hourly, fct_city_weather_hourly, mart_city_weather_daily
+```
+| Source | What | Volume |
+|---|---|---|
+| `vehicle_telemetry` | Battery, GPS, status, speed, odometer, firmware for the same vehicles as the fleet data (`V00001`…) | ~1k readings / 10 min (prod), ~300 (dev) |
+| `weather` | Temperature, precipitation, wind, WMO code for TLV / BER / LIS | 3 rows / 10 min |
+
+- **Why Functions + Snowpipe:** an ADF copy every 10 min would cost ~$70/month/env (1-min minimum × 4 DIU per run) and a
+  warehouse woken every 10 min ~70 credits/month/env. Flex Consumption stays in the free grant; Snowpipe is serverless.
+- **Idempotent:** file names are a function of (source, window). Snowpipe never loads a file name twice and SILVER dedupes
+  (`reading_id`; `city_code, observed_at_utc`), so re-runs and backfills are safe. The cursor moves only after a file is written;
+  a gap catches up 12 windows per run.
+- **Per env:** prod + preprod pull every 10 min. **dev has no timer** (`ingest_schedule_enabled = false`); fill it with
+  *Actions → api-backfill* (env, from, to; max 7 days per run). The mock API serves the dev fleet (600 vehicles) in dev and the full fleet elsewhere.
+- **Health:** `streaming-health.yml` runs hourly on prod (pipe status + `dbt source freshness`, error after 2h) and opens/closes a
+  GitHub issue labelled `api-ingest-failure`. Optional Azure Monitor e-mail alert in prod (`ALERT_EMAIL` secret).
+
+**One-time Snowpipe setup per env** (Snowflake's queue app is a different Entra app than its storage app):
+1. After infra has applied the env: `DESC NOTIFICATION INTEGRATION NI_RIDENEST_<ENV>_LAKE_EVENTS;` → open `AZURE_CONSENT_URL` as a tenant admin.
+2. Find the new service principal's object ID (Entra → Enterprise applications → the `AZURE_MULTI_TENANT_APP_NAME` app).
+3. Set GitHub secret `SNOWFLAKE_QUEUE_SP_OBJECT_ID` (and `snowflake_queue_sp_object_id` in the env's git-ignored
+   `snowflake/local.auto.tfvars`) and re-run *infra*: it grants Storage Queue Data Contributor on the queue, waits 90 s, creates the pipes.
+   Until then the Function still lands files and `functions.yml` skips the Snowpipe check.
+4. Files written before the pipes existed: `ALTER PIPE BRONZE.PIPE_API_<SOURCE> REFRESH;` (loads files from the last 7 days).
 
 ## Cost guardrails
 - Azure budget `budget-ridenest-monthly` ($25/month on `rg-ridenest-ilc`): emails the Owner role at 60% and 100% actual, and 100% forecast.
@@ -102,6 +143,9 @@ Repo: https://github.com/arikhp/ridenest-data-platform — `main` is protected (
 | Pull request (dbt workflow) | full `dbt build` (models + tests) in `PR_<n>_SILVER` / `PR_<n>_GOLD` on dev data; results commented on the PR |
 | PR closed / merged | `PR_<n>_*` schemas dropped (guarded: only `PR_<number>` prefixes, only in dev) |
 | Merge to `main` (dbt changes) | `dbt build` **dev** → **preprod** → **prod** after manual approval |
+| Pull request (functions workflow) | `ruff`, `pytest` (mock API + ingestion), fleet-roster export |
+| Merge to `main` (functions/generator changes) | deploy both Function Apps + smoke test (mock API → backfill one window → file in bronze → Snowpipe rows) **dev** → **preprod** → **prod** after approval |
+| Manual | `api-backfill.yml` (re-pull a range, any env), `streaming-health.yml` (hourly on prod) |
 
 dbt jobs read the env's dbt key from **that env's** Key Vault via OIDC, so no Snowflake dbt key is stored in GitHub
 and a dev run cannot read the prod key. Each run keeps `manifest.json` / `run_results.json` as artifacts (30 days).
@@ -182,3 +226,4 @@ cd infra/envs/dev/snowflake && terraform init -backend-config=../../backend.hcl 
 - [x] Scheduled daily runs (generator → ADF → dbt), prod 02:30 UTC
 - [x] Failure alerts (GitHub issue per env, auto-closed on recovery)
 - [x] Data catalog site (dbt docs on GitHub Pages, refreshed nightly)
+- [ ] External APIs every 10 min (Functions → bronze → Snowpipe → dbt): code + CI/CD in place; per-env Snowpipe consent pending

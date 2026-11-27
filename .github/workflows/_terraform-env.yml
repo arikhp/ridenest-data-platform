@@ -40,6 +40,8 @@ jobs:
       TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_admin_object_ids: ${{ secrets.ADMIN_OBJECT_IDS }} # JSON list, e.g. ["<object-id>"]
       TF_VAR_snowflake_sp_object_id: ${{ secrets.SNOWFLAKE_SP_OBJECT_ID }}
+      TF_VAR_snowflake_queue_sp_object_id: ${{ secrets.SNOWFLAKE_QUEUE_SP_OBJECT_ID }} # Snowpipe notification app; empty = no pipes yet
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }} # optional, prod ingestion alerts
       # snowflake provider
       SNOWFLAKE_ORGANIZATION_NAME: ${{ secrets.SNOWFLAKE_ORGANIZATION_NAME }}
       SNOWFLAKE_ACCOUNT_NAME: ${{ secrets.SNOWFLAKE_ACCOUNT_NAME }}

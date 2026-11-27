@@ -30,6 +30,13 @@ variable "sql_client_ips" {
   default = {}
 }
 
+variable "alert_email" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Optional e-mail for API-ingestion failure alerts (CI: secret ALERT_EMAIL)."
+}
+
 variable "admin_object_ids" {
   type        = list(string)
   default     = []
@@ -57,6 +64,7 @@ module "azure" {
   sql_client_ips      = var.sql_client_ips
   sql_max_size_gb     = var.sql_max_size_gb
   tags                = local.tags
+  alert_email         = var.alert_email
 }
 
 output "azure" {

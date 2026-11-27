@@ -40,3 +40,20 @@ variable "sql_max_size_gb" {
   type    = number
   default = 2
 }
+
+# ---------------- external API ingestion ----------------
+variable "ingest_schedule_enabled" {
+  type        = bool
+  default     = true
+  description = "Run the 10-minute API pull timer. Off in dev: data arrives there only through POST /backfill."
+}
+variable "mockapi_429_rate" {
+  type        = number
+  default     = 0.05
+  description = "Share of mock vendor API calls answered with 429 (exercises the client's retry logic)."
+}
+variable "alert_email" {
+  type        = string
+  default     = ""
+  description = "E-mail for Azure Monitor alerts on failed ingestion runs. Empty = no alert."
+}

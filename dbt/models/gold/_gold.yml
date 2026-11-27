@@ -91,6 +91,33 @@ models:
           - dbt_utils.accepted_range:
               arguments: { min_value: 0, max_value: 1 }
 
+  - name: fct_vehicle_telemetry_hourly
+    description: >
+      One row per vehicle per UTC hour from the ScootTrack telemetry feed (10-minute API pull): battery, share of
+      readings in each status, km driven (odometer delta). Hours touched by late readings are recomputed.
+    config:
+      meta: { domain: fleet }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["vehicle_id", "hour_utc"] }
+    columns:
+      - name: in_ride_share
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 1 }
+      - name: avg_battery_pct
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 100 }
+
+  - name: fct_city_weather_hourly
+    description: One row per city per UTC hour of Open-Meteo weather, with the city's local hour and date.
+    config:
+      meta: { domain: reference }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["city_code", "hour_utc"] }
+
   # ---------------------------------------------------------------- marts (contracts enforced)
   - name: mart_revenue_daily
     description: >
@@ -243,3 +270,34 @@ models:
       - { name: avg_repair_hours, data_type: "number(9, 1)", description: Average hours from ticket opened to closed (closed tickets only). }
       - { name: avg_fleet_size, data_type: "number(9, 1)", description: Average daily fleet size of the city in that month (non-retired vehicles). }
       - { name: cost_per_fleet_vehicle_eur, <<: *eur, description: total_cost_eur / avg_fleet_size - this issue's monthly repair cost per vehicle in the city. }
+
+  - name: mart_city_weather_daily
+    description: >
+      City x local day weather (from the 10-minute Open-Meteo pull) next to that day's trips and collected revenue,
+      for "how much does rain cost us" analysis. One row per city per day with weather data; trips are 0 when
+      none were made.
+    config:
+      contract: { enforced: true }
+      meta: { domain: reference }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["date_day", "city_code"] }
+    columns:
+      - name: date_day
+        data_type: date
+        constraints: [{ type: not_null }]
+        description: Calendar day in the city's local time zone.
+      - name: city_code
+        data_type: varchar
+        constraints: [{ type: not_null }]
+        description: City (TLV, BER, LIS). Joins to dim_city.
+      - { name: weather_hours, <<: *num, description: Hours of that day with at least one weather observation (24 = complete day). }
+      - { name: avg_temperature_c, data_type: "number(5, 1)", description: Mean of the hourly average temperatures (degrees C). }
+      - { name: max_temperature_c, data_type: "number(5, 1)", description: Warmest hourly average temperature of the day (degrees C). }
+      - { name: precipitation_mm, data_type: "number(7, 2)", description: Sum of reported precipitation (mm). }
+      - { name: wet_hours, <<: *num, description: "Hours with rain, snow or a storm reported." }
+      - { name: is_rainy_day, data_type: boolean, description: At least 3 wet hours. }
+      - { name: weather_group, data_type: varchar, description: "Most frequent weather group of the day: clear, cloudy, fog, rain, snow, storm, other." }
+      - { name: trips, <<: *num, description: Valid trips started that day (from mart_revenue_daily; 0 if none). }
+      - { name: collected_eur, <<: *eur, description: Money collected for those trips (EUR). }
+      - { name: avg_duration_min, data_type: "number(9, 1)", description: Average trip duration (minutes); NULL when there were no trips. }

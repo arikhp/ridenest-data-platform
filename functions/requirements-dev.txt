@@ -1,0 +1,4 @@
+-r mock_api/requirements.txt
+-r ingest/requirements.txt
+pytest>=8
+ruff>=0.6

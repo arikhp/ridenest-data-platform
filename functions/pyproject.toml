@@ -1,0 +1,12 @@
+# Lint + test config for both Function Apps (each app is deployed from its own folder).
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["UP017", "E501"] # timezone.utc reads fine; line length is left to `ruff format`
+
+[tool.pytest.ini_options]
+pythonpath = ["mock_api", "ingest"]
+testpaths = ["tests"]

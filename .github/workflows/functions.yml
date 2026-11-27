@@ -1,0 +1,72 @@
+# API ingestion Functions CI/CD (functions/mock_api = ScootTrack mock vendor, functions/ingest = 10-minute pull)
+#   pull request  -> ruff + pytest + fleet-roster export (no Azure access needed)
+#   merge to main -> deploy + smoke test dev -> preprod -> (manual approval) prod
+# Infra (the Function Apps, Event Grid, Snowpipes) comes from infra.yml; this workflow only ships code.
+name: functions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: ["functions/**", "generator/ridenest_gen.py", ".github/workflows/functions.yml", ".github/workflows/_functions-env.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: functions-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: lint + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: functions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            functions/requirements-dev.txt
+            generator/requirements.txt
+      - name: Install
+        run: pip install -q -r requirements-dev.txt -r ../generator/requirements.txt
+      - name: ruff
+        run: ruff check . && ruff format --check .
+      - name: pytest
+        run: pytest -q
+      - name: Fleet roster export (what the mock API ships with)
+        run: |
+          python ../generator/ridenest_gen.py --profile full --export-fleet "$RUNNER_TEMP/roster.json"
+          python -c "import json,sys; r=json.load(open(sys.argv[1])); assert len(r) > 100 and {'vehicle_id','city','lat','lon'} <= r[0].keys()" "$RUNNER_TEMP/roster.json"
+
+  deploy-dev:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: checks
+    uses: ./.github/workflows/_functions-env.yml
+    with:
+      env: dev
+      environment: dev
+    secrets: inherit
+
+  deploy-preprod:
+    needs: deploy-dev
+    uses: ./.github/workflows/_functions-env.yml
+    with:
+      env: preprod
+      environment: preprod
+    secrets: inherit
+
+  deploy-prod:
+    needs: deploy-preprod
+    uses: ./.github/workflows/_functions-env.yml
+    with:
+      env: prod
+      environment: prod # requires approval
+    secrets: inherit
