@@ -141,7 +141,7 @@ resource "azurerm_function_app_flex_consumption" "ingest" {
     MOCK_API_BASE_URL = "https://${azurerm_function_app_flex_consumption.mockapi.default_hostname}"
     LAKE_BLOB_URL     = azurerm_storage_account.lake.primary_blob_endpoint
     STATE_BLOB_URL    = azurerm_storage_account.functions.primary_blob_endpoint
-    # dev: no schedule, data only through POST /backfill (api-backfill.yml)
+    # dev: no schedule, data only through POST /api/backfill (api-backfill.yml)
     "AzureWebJobs.ingest_timer.Disabled" = var.ingest_schedule_enabled ? "false" : "true"
   })
 
@@ -213,6 +213,13 @@ resource "azurerm_role_assignment" "eventgrid_queue_sender" {
   principal_id         = azurerm_eventgrid_system_topic.lake.identity[0].principal_id
 }
 
+# Event Grid validates delivery access when the subscription is created; a fresh role assignment takes a
+# minute or two to take effect, so wait for it (first apply failed with "Managed Identity Authorization Error").
+resource "time_sleep" "eventgrid_queue_role" {
+  create_duration = "120s"
+  triggers        = { role = azurerm_role_assignment.eventgrid_queue_sender.id }
+}
+
 resource "azurerm_eventgrid_system_topic_event_subscription" "snowpipe_api" {
   name                 = "evgs-snowpipe-api"
   system_topic         = azurerm_eventgrid_system_topic.lake.name
@@ -239,7 +246,7 @@ resource "azurerm_eventgrid_system_topic_event_subscription" "snowpipe_api" {
     event_time_to_live    = 1440
   }
 
-  depends_on = [azurerm_role_assignment.eventgrid_queue_sender]
+  depends_on = [time_sleep.eventgrid_queue_role]
 }
 
 # ---------------- Alerting (optional e-mail) ----------------
