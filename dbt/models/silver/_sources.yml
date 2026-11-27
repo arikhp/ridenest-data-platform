@@ -4,7 +4,7 @@ sources:
   - name: bronze
     description: Raw data exactly as landed by Data Factory (one VARIANT per record + file lineage).
     database: "{{ target.database }}"
-    schema: BRONZE
+    schema: "{{ var('bronze_schema', 'BRONZE') }}" # override only to test against a scratch copy
     quoting: { database: false, schema: false, identifier: false }
     config:
       loaded_at_field: _LOADED_AT
@@ -31,3 +31,20 @@ sources:
       - name: raw_ref_pricing
         description: Static per-city pricing. All values arrive as strings.
         config: { freshness: null }
+      # ---- external APIs, loaded every 10 min by Snowpipe (functions/ingest -> bronze/raw/api_*) ----
+      - name: raw_api_vehicle_telemetry
+        description: >
+          ScootTrack (mock IoT vendor) vehicle readings, one NDJSON file per 10-minute window of RECEIVE time.
+          ~1% arrive late (measured up to 40 min earlier), ~0.5% are delivered twice.
+        config:
+          freshness:
+            warn_after: { count: 30, period: minute }
+            error_after: { count: 2, period: hour }
+      - name: raw_api_weather
+        description: >
+          Open-Meteo conditions per city (TLV, BER, LIS): `current` every 10 min (15-minute model steps, so
+          consecutive pulls repeat), `hourly` rows for backfilled windows.
+        config:
+          freshness:
+            warn_after: { count: 30, period: minute }
+            error_after: { count: 2, period: hour }

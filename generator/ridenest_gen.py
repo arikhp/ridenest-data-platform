@@ -307,18 +307,36 @@ def main():
     p.add_argument("--skip-lake", action="store_true",
                    help="only (re)write Azure SQL; the lake files are deterministic and already there")
     p.add_argument("--subscription-id", default=None)
+    p.add_argument("--export-fleet", metavar="PATH",
+                   help="only write the fleet roster (vehicle id, city, home-zone centre) as JSON for the mock "
+                        "telemetry API (functions/mock_api) and exit; touches no Azure resource")
     args = p.parse_args()
     prof = PROFILES[args.profile]
     for k in ("days", "riders", "vehicles"):
         if getattr(args, k) is None:
             setattr(args, k, prof[k])
     args.trips_per_vehicle, args.fleet_start_share = prof["trips_per_vehicle"], prof["fleet_start_share"]
+    if args.export_fleet:
+        export_fleet(args, args.export_fleet)
+        return
 
     sub = args.subscription_id or sh("az", "account", "show", "--query", "id", "-o", "tsv")
     sfx = hashlib.sha1(sub.encode()).hexdigest()[:6]
     server = f"sql-ridenest-{args.env}-{sfx}"
     with temporary_firewall_rule(server):
         run(args, sfx, server)
+
+
+def export_fleet(args, path: str):
+    """Same vehicles (ids, city, home zone) as the generated fleet data, so telemetry joins to dim_vehicle."""
+    gen = Generator(args, args.end, args.end)
+    zones = {z.zone_id: z for z in gen.zones}
+    roster = [dict(vehicle_id=v["vehicle_id"], city=v["city"], vehicle_type=v["vehicle_type"],
+                   home_zone_id=v["home_zone_id"], lat=zones[v["home_zone_id"]].lat, lon=zones[v["home_zone_id"]].lon,
+                   commissioned_on=v["commissioned_on"].isoformat()) for v in gen.vehicles]
+    with open(path, "w") as f:
+        json.dump(roster, f, separators=(",", ":"))
+    print(f"fleet roster: {len(roster)} vehicles ({args.profile} profile) -> {path}")
 
 
 @contextlib.contextmanager

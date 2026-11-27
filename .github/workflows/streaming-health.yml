@@ -1,0 +1,103 @@
+# Hourly health check of the 10-minute API ingestion (prod by schedule; any env by hand):
+#   Snowpipe status of every BRONZE.PIPE_API_* + dbt source freshness of BRONZE.RAW_API_* (error after 2h).
+# A failure opens (or comments on) a GitHub issue labelled `api-ingest-failure`; the next healthy check closes it.
+name: streaming-health
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment
+        type: choice
+        options: [prod, preprod, dev]
+        default: prod
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: streaming-health-${{ inputs.env || 'prod' }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check ${{ inputs.env || 'prod' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ (inputs.env || 'prod') == 'prod' && 'prod-ops' || inputs.env }}
+    env:
+      ENV: ${{ inputs.env || 'prod' }}
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ORGANIZATION_NAME }}-${{ secrets.SNOWFLAKE_ACCOUNT_NAME }}
+      DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: dbt/requirements.txt
+      - name: Install
+        run: pip install -q -r dbt/requirements.txt && (cd dbt && dbt deps --quiet)
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Load the loader + dbt keys from the env's Key Vault
+        shell: bash
+        run: |
+          set -euo pipefail
+          SFX=$(printf "%s" "${{ secrets.AZURE_SUBSCRIPTION_ID }}" | sha1sum | cut -c1-4)
+          for PAIR in "SNOWFLAKE_LOADER_PRIVATE_KEY:snowflake-loader-private-key" "SNOWFLAKE_DBT_PRIVATE_KEY:snowflake-dbt-private-key"; do
+            VAR=${PAIR%%:*}; SECRET=${PAIR#*:}
+            KEY=$(az keyvault secret show --vault-name "kv-ridenest-${ENV}-${SFX}" -n "$SECRET" --query value -o tsv)
+            while IFS= read -r line; do [ -n "$line" ] && echo "::add-mask::$line"; done <<< "$KEY"
+            { echo "$VAR<<__KEY__"; echo "$KEY"; echo "__KEY__"; } >> "$GITHUB_ENV"
+          done
+      - name: Snowpipe status
+        run: |
+          echo "### API ingestion health — $ENV" >> "$GITHUB_STEP_SUMMARY"
+          python functions/ops/check_bronze_load.py --env "$ENV" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: BRONZE freshness (dbt)
+        working-directory: dbt
+        env:
+          DBT_TARGET: ${{ inputs.env || 'prod' }}
+        run: |
+          dbt source freshness --select source:bronze.raw_api_vehicle_telemetry source:bronze.raw_api_weather
+          python3 -c "import json;r=json.load(open('target/sources.json'));print('\n'.join(f\"- {x['unique_id'].split('.')[-1]}: {x['status']} (last load {x.get('max_loaded_at','?')})\" for x in r['results']))" >> "$GITHUB_STEP_SUMMARY"
+
+  alert:
+    name: alert ${{ inputs.env || 'prod' }}
+    needs: check
+    if: always() && (needs.check.result == 'failure' || needs.check.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ENV: ${{ inputs.env || 'prod' }}
+      RESULT: ${{ needs.check.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update or close the api-ingest-failure issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          LABEL=api-ingest-failure
+          TITLE="API ingestion unhealthy: $ENV"
+          gh label create "$LABEL" --color D93F0B --description "10-minute API ingestion is stale or a Snowpipe is failing" 2>/dev/null || true
+          NUM=$(gh issue list --label "$LABEL" --state open --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ "$RESULT" = failure ]; then
+            BODY=$(printf '%s\n' "The hourly check of **$ENV** failed: a Snowpipe is not RUNNING or BRONZE.RAW_API_* has had no new rows for 2h." "" \
+              "- Log: $RUN_URL" \
+              "- Look at: Function App func-ridenest-ingest-$ENV-* (App Insights failures), SYSTEM\$PIPE_STATUS, the lake queue snowpipe-events." \
+              "- Missing windows can be re-pulled with Actions > api-backfill. This issue closes after the next healthy check.")
+            if [ -n "$NUM" ]; then gh issue comment "$NUM" --body "$BODY"; else gh issue create --title "$TITLE" --label "$LABEL" --body "$BODY"; fi
+          elif [ -n "$NUM" ]; then
+            gh issue close "$NUM" --comment "Healthy again ($RUN_URL)."
+          fi

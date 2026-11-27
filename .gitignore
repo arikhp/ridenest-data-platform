@@ -26,3 +26,9 @@ dbt/.user.yml
 
 # Fabric deploy tooling
 fabric/.venv/
+
+# API ingestion: generated at deploy time from the generator (functions.yml)
+functions/mock_api/mockapi/fleet_roster.json
+functions/**/.python_packages/
+.pytest_cache/
+.ruff_cache/

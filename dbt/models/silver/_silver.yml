@@ -157,3 +157,60 @@ models:
     columns:
       - name: promo_code
         data_tests: [unique, not_null]
+
+  # ---------------------------------------------------------------- external APIs (10-minute Snowpipe loads)
+  - name: vehicle_telemetry
+    description: >
+      One row per vehicle reading from the ScootTrack telemetry API (mock IoT vendor), deduplicated on reading_id,
+      timestamps in UTC. Late readings (delivered > 10 min after measurement) are flagged, not dropped.
+      Incremental (merge on reading_id).
+    config:
+      meta: { domain: fleet }
+    columns:
+      - name: reading_id
+        description: Vendor id of the reading (stable across re-deliveries).
+        data_tests: [unique, not_null]
+      - name: vehicle_id
+        description: Vehicle that reported. Joins to dim_vehicle.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: { to: ref('vehicles'), field: vehicle_id }
+              config: { severity: warn }
+      - name: reading_ts_utc
+        description: When the vehicle measured the values (UTC).
+        data_tests: [not_null]
+      - name: received_at_utc
+        description: When the vendor received the reading (UTC); the API pages by this time.
+      - name: is_late
+        description: Delivered more than 10 minutes after it was measured (device was offline).
+      - name: battery_pct
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 100 }
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["available", "in_ride", "low_battery", "maintenance"] }
+
+  - name: weather_observations
+    description: >
+      Weather per city per observation time from Open-Meteo (UTC): 15-minute `current` values from the 10-minute
+      pull, hourly values from backfills. weather_group buckets the WMO weather code.
+    config:
+      meta: { domain: reference }
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: { combination_of_columns: ["city_code", "observed_at_utc"] }
+    columns:
+      - name: city_code
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: { values: ["TLV", "BER", "LIS"] }
+      - name: observed_at_utc
+        data_tests: [not_null]
+      - name: weather_group
+        data_tests:
+          - accepted_values:
+              arguments: { values: ["clear", "cloudy", "fog", "rain", "snow", "storm", "other"] }

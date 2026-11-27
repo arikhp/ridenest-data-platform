@@ -57,6 +57,8 @@ module "azure" {
   sql_client_ips      = var.sql_client_ips
   sql_max_size_gb     = var.sql_max_size_gb
   tags                = local.tags
+  # external API ingestion: dev has no schedule (backfill only)
+  ingest_schedule_enabled = false
 }
 
 output "azure" {

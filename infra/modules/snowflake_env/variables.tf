@@ -34,3 +34,21 @@ variable "bi_user" {
   sensitive   = true
   description = "Read-only BI user (Fabric / Power BI) on <ENV>_READER with its own XS warehouse and credit cap. Null = none."
 }
+
+# ---------------- external API sources (Snowpipe) ----------------
+variable "lake_queue_url" {
+  type        = string
+  description = "https://<lake>.queue.core.windows.net/snowpipe-events - Event Grid BlobCreated queue for bronze/raw/api_*."
+}
+
+variable "auto_ingest_enabled" {
+  type        = bool
+  default     = false
+  description = "Create the Snowpipes. Needs Snowflake's notification app to hold Storage Queue Data Contributor on the queue (CREATE PIPE checks access)."
+}
+
+variable "auto_ingest_gate" {
+  type        = string
+  default     = ""
+  description = "Any value known only after the queue role assignment exists (e.g. a time_sleep id), so the pipes wait for it."
+}

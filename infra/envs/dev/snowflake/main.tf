@@ -10,6 +10,7 @@ terraform {
     snowflake = { source = "snowflakedb/snowflake", version = "~> 2.24" }
     tls       = { source = "hashicorp/tls", version = "~> 4.0" }
     random    = { source = "hashicorp/random", version = "~> 3.6" }
+    time      = { source = "hashicorp/time", version = "~> 0.12" }
   }
   backend "azurerm" {
     key = "dev-snowflake.tfstate" # rest comes from ../../backend.hcl
@@ -27,6 +28,9 @@ provider "snowflake" {
   warehouse = "COMPUTE_WH" # trial default; some reads (policy references) need a warehouse
   preview_features_enabled = [
     "snowflake_storage_integration_azure_resource",
+    "snowflake_notification_integration_resource",
+    "snowflake_table_resource",
+    "snowflake_pipe_resource",
   ]
 }
 
@@ -39,6 +43,12 @@ variable "snowflake_sp_object_id" {
   type        = string
   default     = ""
   description = "Object ID of Snowflake's service principal in Entra (exists after the consent URL is accepted)."
+}
+
+variable "snowflake_queue_sp_object_id" {
+  type        = string
+  default     = ""
+  description = "Object ID of the service principal of Snowflake's NOTIFICATION integration app (DESC NOTIFICATION INTEGRATION -> AZURE_CONSENT_URL). Empty = no Snowpipes yet."
 }
 
 locals {
@@ -103,6 +113,9 @@ module "snowflake" {
   env                            = local.env
   azure_tenant_id                = data.azurerm_client_config.current.tenant_id
   lake_account_name              = data.azurerm_storage_account.lake.name
+  lake_queue_url                 = "${data.azurerm_storage_account.lake.primary_queue_endpoint}snowpipe-events"
+  auto_ingest_enabled            = var.snowflake_queue_sp_object_id != ""
+  auto_ingest_gate               = try(time_sleep.queue_role_propagation[0].id, "")
   monthly_credit_quota           = var.credit_quota
   transformer_can_create_schemas = true # per-PR dbt schemas
   service_user_public_keys       = { for k, key in tls_private_key.svc : k => trimspace(replace(replace(key.public_key_pem, "-----BEGIN PUBLIC KEY-----", ""), "-----END PUBLIC KEY-----", "")) }
@@ -123,4 +136,19 @@ resource "azurerm_role_assignment" "snowflake_lake_reader" {
 
 output "snowflake" {
   value = module.snowflake
+}
+
+# Snowpipe auto-ingest: Snowflake's notification app reads the Event Grid queue in the lake.
+resource "azurerm_role_assignment" "snowflake_queue_reader" {
+  count                = var.snowflake_queue_sp_object_id == "" ? 0 : 1
+  scope                = "${data.azurerm_storage_account.lake.id}/queueServices/default/queues/snowpipe-events"
+  role_definition_name = "Storage Queue Data Contributor"
+  principal_id         = var.snowflake_queue_sp_object_id
+}
+
+# CREATE PIPE checks queue access; give the new role assignment time to take effect.
+resource "time_sleep" "queue_role_propagation" {
+  count           = var.snowflake_queue_sp_object_id == "" ? 0 : 1
+  create_duration = "90s"
+  triggers        = { role = azurerm_role_assignment.snowflake_queue_reader[0].id }
 }
